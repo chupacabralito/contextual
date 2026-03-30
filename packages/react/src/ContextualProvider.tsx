@@ -1,8 +1,8 @@
 // =============================================================================
 // Contextual Provider
 // =============================================================================
-// Top-level component that wraps the user's app. Renders the toolbar,
-// element highlights, annotation input, queue panel, and inspect panel.
+// Top-level component that wraps the user's app. Renders the unified side panel,
+// element highlights, and annotation input (near the targeted element).
 //
 // Usage:
 //   import { ContextualProvider } from '@contextual/react';
@@ -12,21 +12,18 @@
 // =============================================================================
 
 import React, { useEffect } from 'react';
-import type { ResolutionDepth } from '@contextual/shared';
 import { useContextual } from './hooks/useContextual.js';
 import { useElementTargeting } from './hooks/useElementTargeting.js';
-import { Toolbar } from './components/Toolbar.js';
+import { SidePanel } from './components/SidePanel.js';
 import { ElementHighlight } from './components/ElementHighlight.js';
 import { AnnotationInput } from './components/AnnotationInput.js';
-import { QueuePanel } from './components/QueuePanel.js';
-import { InspectPanel } from './components/InspectPanel.js';
 
 interface ContextualProviderProps {
   children: React.ReactNode;
   /** URL of the local context server (default: http://localhost:4700) */
   serverUrl?: string;
-  /** Default resolution depth (default: 'standard') */
-  defaultDepth?: ResolutionDepth;
+  /** @deprecated No longer used. */
+  defaultDepth?: string;
   /** Keyboard shortcut to toggle annotation mode (default: Cmd+Shift+A / Ctrl+Shift+A) */
   hotkey?: { key: string; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean };
 }
@@ -36,17 +33,17 @@ const DEFAULT_HOTKEY = { key: 'a', shiftKey: true }; // + meta/ctrl detected at 
 export function ContextualProvider({
   children,
   serverUrl,
-  defaultDepth,
   hotkey = DEFAULT_HOTKEY,
 }: ContextualProviderProps) {
-  const contextual = useContextual({ serverUrl, defaultDepth });
+  const contextual = useContextual({ serverUrl });
+  const resolvedServerUrl = serverUrl ?? 'http://localhost:4700';
 
   const { hoveredElement } = useElementTargeting({
     enabled: contextual.state === 'targeting',
     onTarget: contextual.setTargetedElement,
   });
 
-  // Global keyboard shortcut to toggle annotation mode
+  // Global keyboard shortcut to toggle annotation mode (Cmd+Shift+A)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const modifierMatch =
@@ -72,6 +69,22 @@ export function ContextualProvider({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [contextual.state, contextual.startTargeting, contextual.cancel, hotkey]);
+
+  // Global Esc key to exit any active state
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Don't intercept if we're in the annotation input (it has its own Esc)
+      if (contextual.state === 'annotating') return;
+      if (contextual.state === 'idle') return;
+
+      e.preventDefault();
+      contextual.cancel();
+    };
+
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [contextual.state, contextual.cancel]);
 
   return (
     <>
@@ -99,7 +112,7 @@ export function ContextualProvider({
           />
         )}
 
-      {/* Annotation input */}
+      {/* Annotation input (positioned near the targeted element) */}
       {contextual.state === 'annotating' &&
         contextual.mode === 'instruct' &&
         contextual.targetedElement && (
@@ -110,47 +123,29 @@ export function ContextualProvider({
               contextual.targetedElement.boundingBox.y +
               contextual.targetedElement.boundingBox.height,
           }}
-          serverUrl={serverUrl ?? 'http://localhost:4700'}
-          onSubmit={contextual.resolveAndPreview}
+          serverUrl={resolvedServerUrl}
+          onSubmit={contextual.queueInstruction}
           onCancel={contextual.cancel}
-          depth={contextual.depth}
-          onDepthChange={contextual.setDepth}
           initialText={contextual.lastAnnotationText}
         />
       )}
 
-      {/* Queue panel */}
-      {contextual.queueLength > 0 && (
-        <QueuePanel
-          queue={contextual.queue}
-          depth={contextual.depth}
-          onDepthChange={contextual.setDepth}
-          onEditInstruction={contextual.editQueueItem}
-          onRemoveInstruction={contextual.removeFromQueue}
-          onReorderInstruction={contextual.reorderQueue}
-          onClearQueue={contextual.clearQueue}
-          onSubmitPass={contextual.submitPass}
-          error={contextual.error}
-        />
-      )}
-
-      {/* Inspect panel */}
-      {contextual.state === 'inspecting' && contextual.targetedElement && (
-        <InspectPanel
-          target={contextual.targetedElement}
-          serverUrl={serverUrl ?? 'http://localhost:4700'}
-          onClose={contextual.cancel}
-        />
-      )}
-
-      {/* Toolbar */}
-      <Toolbar
+      {/* Unified side panel: mode toggle + queue + inspect */}
+      <SidePanel
         state={contextual.state}
         mode={contextual.mode}
         onModeChange={contextual.setMode}
-        onStartTargeting={contextual.startTargeting}
         onCancel={contextual.cancel}
-        queueLength={contextual.queueLength}
+        queue={contextual.queue}
+        onEditInstruction={contextual.editQueueItem}
+        onRemoveInstruction={contextual.removeFromQueue}
+        onReorderInstruction={contextual.reorderQueue}
+        onClearQueue={contextual.clearQueue}
+        onSubmitPass={contextual.submitPass}
+        error={contextual.error}
+        targetedElement={contextual.targetedElement}
+        serverUrl={resolvedServerUrl}
+        onInspectClose={() => contextual.startTargeting()}
       />
     </>
   );

@@ -12,8 +12,8 @@ export type { ContextualState } from './hooks/useContextual.js';
 export { useAnnotationQueue } from './hooks/useAnnotationQueue.js';
 export { useElementTargeting } from './hooks/useElementTargeting.js';
 export { useMentionParser } from './hooks/useMentionParser.js';
-export { parseActions, parseMentions } from './mentions/parser.js';
-export { formatOutput, formatPass } from './output/formatter.js';
+export { parseActions } from './mentions/parser.js';
+export { formatPass } from './output/formatter.js';
 
 // Re-export shared types consumers will need
 export type {
@@ -21,14 +21,10 @@ export type {
   AnnotationMode,
   TargetedElement,
   ParsedAction,
-  ParsedMention,
   QueuedInstruction,
   Pass,
   Instruction,
   PreAttachedSnippet,
   ContextType,
-  ResolutionDepth,
-  StructuredOutput,
-  MentionResult,
   ContextMatch,
 } from '@contextual/shared';

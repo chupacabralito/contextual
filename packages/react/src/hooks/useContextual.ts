@@ -1,8 +1,12 @@
 // =============================================================================
 // Main Contextual Hook
 // =============================================================================
-// Orchestrates the Gate 1 workflow: targeting -> queueing instructions ->
+// Orchestrates the annotation workflow: targeting -> queueing instructions ->
 // submitting refinement passes, plus Inspect mode for element history.
+//
+// Refined: No depth selector, no pre-resolution. Passes store raw instructions
+// with @tool[query] action references. Context is read by the agent at
+// execution time, not baked in at annotation time.
 // =============================================================================
 
 import { useCallback, useRef, useState } from 'react';
@@ -10,11 +14,8 @@ import type {
   AnnotationMode,
   CreatePassRequest,
   Instruction,
-  MentionResult,
   Pass,
-  PreAttachedSnippet,
   QueuedInstruction,
-  ResolutionDepth,
   TargetedElement,
 } from '@contextual/shared';
 import { parseActions } from '../mentions/parser.js';
@@ -32,8 +33,6 @@ export type ContextualState =
 interface UseContextualOptions {
   /** Base URL for the local context server */
   serverUrl?: string;
-  /** Default resolution depth */
-  defaultDepth?: ResolutionDepth;
 }
 
 interface UseContextualReturn {
@@ -41,7 +40,7 @@ interface UseContextualReturn {
   state: ContextualState;
   /** Current interaction mode */
   mode: AnnotationMode;
-  /** Update interaction mode */
+  /** Update interaction mode (also starts targeting immediately) */
   setMode: (mode: AnnotationMode) => void;
   /** Start targeting mode */
   startTargeting: () => void;
@@ -51,12 +50,8 @@ interface UseContextualReturn {
   targetedElement: TargetedElement | null;
   /** Set element from targeting hook */
   setTargetedElement: (el: TargetedElement) => void;
-  /** Current resolution depth */
-  depth: ResolutionDepth;
-  /** Update resolution depth */
-  setDepth: (depth: ResolutionDepth) => void;
-  /** Resolve context and add/update an instruction in the queue */
-  resolveAndPreview: (annotationText: string) => Promise<void>;
+  /** Queue an instruction (no pre-resolution, just parse and queue) */
+  queueInstruction: (annotationText: string) => void;
   /** Queue of instructions being prepared for the next pass */
   queue: QueuedInstruction[];
   /** Number of queued instructions */
@@ -69,8 +64,6 @@ interface UseContextualReturn {
   clearQueue: () => void;
   /** Re-open a queued instruction for editing */
   editQueueItem: (id: string) => void;
-  /** Whether context resolution is in progress */
-  isResolving: boolean;
   /** Submit the queued pass (formats output for agent) */
   submitPass: () => Promise<void>;
   /** The last annotation text (preserved for back-to-edit) */
@@ -88,29 +81,15 @@ function buildInstructionId(): string {
   return `instruction_${instructionCounter}_${Date.now()}`;
 }
 
-function toPreAttachedContext(resolvedContext: MentionResult[]): PreAttachedSnippet[] {
-  return resolvedContext.flatMap((result) =>
-    result.matches.map((match) => ({
-      type: result.type,
-      query: result.query,
-      content: match.content,
-      source: match.source,
-    }))
-  );
-}
-
 /**
  * Main hook that orchestrates the Contextual annotation workflow.
  */
 export function useContextual({
   serverUrl = `http://localhost:4700`,
-  defaultDepth = 'standard',
 }: UseContextualOptions = {}): UseContextualReturn {
   const [state, setState] = useState<ContextualState>('idle');
   const [mode, setModeState] = useState<AnnotationMode>('instruct');
   const [targetedElement, setTargetedElementState] = useState<TargetedElement | null>(null);
-  const [depth, setDepth] = useState<ResolutionDepth>(defaultDepth);
-  const [isResolving, setIsResolving] = useState(false);
   const [lastAnnotationText, setLastAnnotationText] = useState('');
   const [editingInstructionId, setEditingInstructionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +109,6 @@ export function useContextual({
     setTargetedElementState(null);
     setLastAnnotationText('');
     setEditingInstructionId(null);
-    setIsResolving(false);
   }, []);
 
   const startTargeting = useCallback(() => {
@@ -147,16 +125,16 @@ export function useContextual({
     resetSurfaceState();
   }, [resetSurfaceState]);
 
+  // Setting a mode immediately starts targeting (items 4 + 5)
   const setMode = useCallback(
     (nextMode: AnnotationMode) => {
-      if (state !== 'idle') {
-        return;
-      }
-
       setModeState(nextMode);
       setError(null);
+      setStructuredPrompt(null);
+      resetSurfaceState();
+      setState('targeting');
     },
-    [state]
+    [resetSurfaceState]
   );
 
   const setTargetedElement = useCallback(
@@ -180,7 +158,6 @@ export function useContextual({
       setEditingInstructionId(id);
       setTargetedElementState(instruction.element);
       setLastAnnotationText(instruction.rawText);
-      setDepth(instruction.depth);
       setError(null);
       setState('annotating');
     },
@@ -197,7 +174,7 @@ export function useContextual({
         setLastAnnotationText('');
 
         if (state === 'annotating') {
-          setState('idle');
+          setState('targeting');
         }
       }
     },
@@ -208,14 +185,15 @@ export function useContextual({
     clearQueueBase();
 
     if (state === 'annotating') {
-      setState('idle');
+      setState('targeting');
     }
 
     resetSurfaceState();
   }, [clearQueueBase, resetSurfaceState, state]);
 
-  const resolveAndPreview = useCallback(
-    async (annotationText: string) => {
+  // Queue an instruction: parse actions from text, no server resolution.
+  const queueInstruction = useCallback(
+    (annotationText: string) => {
       if (!targetedElement) {
         return;
       }
@@ -228,49 +206,13 @@ export function useContextual({
 
       setLastAnnotationText(rawText);
       setError(null);
-      let resolvedContext: MentionResult[] = [];
-
-      if (actions.length > 0) {
-        setIsResolving(true);
-
-        try {
-          const response = await fetch(`${serverUrl}/resolve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mentions: actions.map((action) => ({
-                type: action.source,
-                query: action.instruction,
-              })),
-              depth,
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`Server returned ${response.status}`);
-          }
-
-          const data = (await response.json()) as { results?: MentionResult[] };
-          resolvedContext = data.results ?? [];
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : 'Failed to reach context server';
-          setError(
-            `Could not reach context server at ${serverUrl}. The instruction was queued without pre-attached context. (${message})`
-          );
-        } finally {
-          setIsResolving(false);
-        }
-      }
 
       const queuedInstruction: QueuedInstruction = {
         id: existingInstruction?.id ?? buildInstructionId(),
         element: targetedElement,
         rawText,
         actions,
-        depth,
         createdAt: existingInstruction?.createdAt ?? new Date().toISOString(),
-        resolvedContext,
       };
 
       if (existingInstruction) {
@@ -280,16 +222,15 @@ export function useContextual({
       }
 
       setStructuredPrompt(null);
-      setState('idle');
+      // Return to targeting so user can immediately click the next element
+      setState('targeting');
       resetSurfaceState();
     },
     [
       addToQueue,
-      depth,
       editingInstructionId,
       queue,
       resetSurfaceState,
-      serverUrl,
       targetedElement,
       updateInstruction,
     ]
@@ -305,16 +246,15 @@ export function useContextual({
       element: queuedInstruction.element,
       rawText: queuedInstruction.rawText,
       actions: queuedInstruction.actions,
-      preAttachedContext: toPreAttachedContext(queuedInstruction.resolvedContext),
+      preAttachedContext: [], // No pre-resolution; agent reads context at execution time
     }));
     const pass: Pass = {
       id: `pass_${Date.now()}`,
       timestamp,
-      depth,
       instructions,
     };
 
-    const prompt = formatPass(queue, depth);
+    const prompt = formatPass(queue);
     setStructuredPrompt(prompt);
 
     try {
@@ -348,7 +288,7 @@ export function useContextual({
     } catch {
       setError('Failed to copy refinement pass to the clipboard');
     }
-  }, [clearQueueBase, depth, queue, serverUrl]);
+  }, [clearQueueBase, queue, serverUrl]);
 
   return {
     state,
@@ -358,16 +298,13 @@ export function useContextual({
     cancel,
     targetedElement,
     setTargetedElement,
-    depth,
-    setDepth,
-    resolveAndPreview,
+    queueInstruction,
     queue,
     queueLength,
     removeFromQueue,
     reorderQueue,
     clearQueue,
     editQueueItem,
-    isResolving,
     submitPass,
     lastAnnotationText,
     error,

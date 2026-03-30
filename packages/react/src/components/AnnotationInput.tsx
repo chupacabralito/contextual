@@ -7,7 +7,6 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ResolutionDepth } from '@contextual/shared';
 import { useMentionParser } from '../hooks/useMentionParser.js';
 
 interface AnnotationInputProps {
@@ -19,30 +18,15 @@ interface AnnotationInputProps {
   onSubmit: (text: string) => void;
   /** Called when user cancels */
   onCancel: () => void;
-  /** Current depth level */
-  depth: ResolutionDepth;
-  /** Update depth level */
-  onDepthChange: (depth: ResolutionDepth) => void;
   /** Pre-fill text when editing an existing queued instruction */
   initialText?: string;
 }
-
-const DEPTH_LABELS: Record<ResolutionDepth, string> = {
-  light: 'Light',
-  standard: 'Standard',
-  detailed: 'Detailed',
-  full: 'Full',
-};
-
-const DEPTHS: ResolutionDepth[] = ['light', 'standard', 'detailed', 'full'];
 
 export function AnnotationInput({
   position,
   serverUrl,
   onSubmit,
   onCancel,
-  depth,
-  onDepthChange,
   initialText = '',
 }: AnnotationInputProps) {
   const parser = useMentionParser({ serverUrl });
@@ -102,6 +86,12 @@ export function AnnotationInput({
     [parser]
   );
 
+  const handleSubmit = useCallback(() => {
+    if (parser.text.trim()) {
+      onSubmit(parser.text.trim());
+    }
+  }, [parser.text, onSubmit]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Handle autocomplete navigation
@@ -130,9 +120,7 @@ export function AnnotationInput({
       // Submit on Cmd/Ctrl + Enter
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        if (parser.text.trim()) {
-          onSubmit(parser.text.trim());
-        }
+        handleSubmit();
         return;
       }
 
@@ -143,7 +131,7 @@ export function AnnotationInput({
         return;
       }
     },
-    [parser.completions, parser.text, selectedCompletion, applyCompletion, onSubmit, onCancel]
+    [parser.completions, selectedCompletion, applyCompletion, handleSubmit, onCancel]
   );
 
   // Position the input below the targeted element, clamped to viewport
@@ -175,7 +163,7 @@ export function AnnotationInput({
           onChange={handleChange}
           onSelect={handleSelect}
           onKeyDown={handleKeyDown}
-          placeholder='Type instruction... local repositories autocomplete, any @source[...] is valid'
+          placeholder='Write an instruction... use @tool[query] for agent actions'
           rows={3}
           style={{
             width: '100%',
@@ -226,14 +214,14 @@ export function AnnotationInput({
         )}
 
         <div style={{ marginTop: 6, fontSize: 11, color: '#606078', lineHeight: 1.5 }}>
-          Local repositories autocomplete here, but you can also type custom sources like{' '}
+          Use{' '}
           <code style={{ fontFamily: '"SF Mono", Menlo, monospace', color: '#8fb7ff' }}>
-            @posthog[...]
-          </code>
-          .
+            @tool[query]
+          </code>{' '}
+          to reference configured tools or specify agent actions.
         </div>
 
-        {/* Bottom bar: depth selector + submit hint */}
+        {/* Bottom bar: Done button + keyboard shortcut hint */}
         <div
           style={{
             display: 'flex',
@@ -242,37 +230,27 @@ export function AnnotationInput({
             marginTop: 8,
           }}
         >
-          {/* Depth selector */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {DEPTHS.map((d) => (
-              <button
-                key={d}
-                onClick={() => onDepthChange(d)}
-                style={{
-                  padding: '3px 8px',
-                  fontSize: 11,
-                  color: d === depth ? '#fff' : '#808098',
-                  backgroundColor:
-                    d === depth ? 'rgba(99, 102, 241, 0.3)' : 'transparent',
-                  border:
-                    d === depth
-                      ? '1px solid rgba(99, 102, 241, 0.5)'
-                      : '1px solid rgba(99, 102, 241, 0.15)',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                {DEPTH_LABELS[d]}
-              </button>
-            ))}
-          </div>
-
-          {/* Submit hint */}
           <span style={{ fontSize: 11, color: '#606078' }}>
-            {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}+Enter to
-            submit
+            {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}+Enter
           </span>
+
+          <button
+            onClick={handleSubmit}
+            style={{
+              padding: '7px 20px',
+              fontSize: 13,
+              fontWeight: 600,
+              color: '#fff',
+              backgroundColor: 'rgba(99, 102, 241, 0.8)',
+              border: 'none',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)',
+            }}
+          >
+            Done
+          </button>
         </div>
       </div>
     </div>

@@ -56,7 +56,7 @@ function isResolveRequest(value: unknown): value is ResolveRequest {
   const request = value as ResolveRequest;
   return (
     Array.isArray(request.mentions) &&
-    typeof request.depth === 'string' &&
+    (request.depth === undefined || typeof request.depth === 'string') &&
     request.mentions.every(
       (mention) =>
         mention &&
@@ -240,10 +240,9 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
     if (
       typeof pass.id !== 'string' ||
       typeof pass.timestamp !== 'string' ||
-      typeof pass.depth !== 'string' ||
       !Array.isArray(pass.instructions)
     ) {
-      res.status(400).json({ error: 'Pass must include id, timestamp, depth, and instructions[]' });
+      res.status(400).json({ error: 'Pass must include id, timestamp, and instructions[]' });
       return;
     }
 

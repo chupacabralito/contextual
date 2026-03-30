@@ -178,12 +178,8 @@ export interface QueuedInstruction {
   rawText: string;
   /** Parsed @source[instruction] directives */
   actions: ParsedAction[];
-  /** Resolution depth chosen for this instruction */
-  depth: ResolutionDepth;
   /** ISO timestamp when added to queue */
   createdAt: string;
-  /** Resolved context from server (for preview display) */
-  resolvedContext: MentionResult[];
 }
 
 /**
@@ -195,8 +191,8 @@ export interface Pass {
   id: string;
   /** ISO 8601 timestamp */
   timestamp: string;
-  /** Resolution depth used for the pass */
-  depth: ResolutionDepth;
+  /** Resolution depth (optional, defaults to 'standard') */
+  depth?: ResolutionDepth;
   /** All instructions in the pass */
   instructions: Instruction[];
 }
@@ -221,8 +217,8 @@ export interface ResolveMentionRequest {
 export interface ResolveRequest {
   /** Mentions to resolve */
   mentions: ResolveMentionRequest[];
-  /** Desired resolution depth */
-  depth: ResolutionDepth;
+  /** Desired resolution depth (optional, defaults to 'standard') */
+  depth?: ResolutionDepth;
 }
 
 // -----------------------------------------------------------------------------
@@ -353,8 +349,8 @@ export interface PassSummary {
   id: string;
   /** ISO timestamp */
   timestamp: string;
-  /** Resolution depth */
-  depth: ResolutionDepth;
+  /** Resolution depth (optional) */
+  depth?: ResolutionDepth;
   /** Number of instructions in the pass */
   instructionCount: number;
   /** Element labels targeted in this pass */

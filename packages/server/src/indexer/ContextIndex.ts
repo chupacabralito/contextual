@@ -263,18 +263,6 @@ export class ContextIndex {
     }
     stmt.free();
 
-    if (!type) {
-      for (const contextType of CONTEXT_TYPES) {
-        if (contextType.startsWith(normalized)) {
-          suggestions.set(`type:${contextType}`, {
-            text: contextType,
-            type: contextType,
-            preview: `Context type: ${contextType}`,
-          });
-        }
-      }
-    }
-
     return Array.from(suggestions.values()).slice(0, 10);
   }
 

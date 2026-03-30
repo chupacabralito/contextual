@@ -6,12 +6,8 @@
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ContextType, ParsedAction, ParsedMention } from '@contextual/shared';
-import {
-  getTypeCompletions,
-  isLocalContextType,
-  parseActions,
-} from '../mentions/parser.js';
+import type { ParsedAction } from '@contextual/shared';
+import { parseActions } from '../mentions/parser.js';
 
 interface UseMentionParserReturn {
   /** Current annotation text */
@@ -22,8 +18,6 @@ interface UseMentionParserReturn {
   setCursorPosition: (pos: number) => void;
   /** Parsed actions from current text */
   actions: ParsedAction[];
-  /** Parsed mentions from current text */
-  mentions: ParsedMention[];
   /** Whether the cursor is inside an @mention being typed */
   isTypingMention: boolean;
   /** Autocomplete suggestions for the current partial mention */
@@ -49,21 +43,6 @@ export function useMentionParser({
   const [remoteCompletions, setRemoteCompletions] = useState<string[]>([]);
 
   const actions = useMemo(() => parseActions(text), [text]);
-  const mentions = useMemo(
-    () =>
-      actions
-        .filter(
-          (action): action is ParsedAction & { source: ContextType } =>
-            isLocalContextType(action.source)
-        )
-        .map((action) => ({
-          type: action.source,
-          query: action.instruction,
-          startIndex: action.startIndex,
-          endIndex: action.endIndex,
-        })),
-    [actions]
-  );
 
   // Detect if user is currently typing an @mention
   const { isTypingMention, partialMention, mentionStartIndex } = useMemo(() => {
@@ -93,11 +72,6 @@ export function useMentionParser({
       mentionStartIndex: atIndex,
     };
   }, [text, cursorPosition]);
-
-  const localCompletions = useMemo(
-    () => (isTypingMention ? getTypeCompletions(partialMention) : []),
-    [isTypingMention, partialMention]
-  );
 
   useEffect(() => {
     if (!isTypingMention || !partialMention.trim()) {
@@ -142,16 +116,7 @@ export function useMentionParser({
     return () => controller.abort();
   }, [isTypingMention, partialMention, serverUrl]);
 
-  const completions = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...localCompletions,
-          ...remoteCompletions,
-        ])
-      ),
-    [localCompletions, remoteCompletions]
-  );
+  const completions = remoteCompletions;
 
   const handleSetText = useCallback((newText: string) => {
     setText(newText);
@@ -162,7 +127,6 @@ export function useMentionParser({
     setText: handleSetText,
     setCursorPosition,
     actions,
-    mentions,
     isTypingMention,
     completions,
     partialMention,
