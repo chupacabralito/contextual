@@ -1,5 +1,4 @@
 # contextual
-
 Operating system for context-aware AI design
 
 Contextual gives AI design agents the context behind the pixels. It helps designers organize research, taste, strategy, stakeholder input, and design-system knowledge before the first prototype, then use structured annotation passes to guide refinement with context-aware instructions.
