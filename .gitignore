@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+*.log
+.env
+.env.local
+packages/context-manager/server/*.js
+packages/context-manager/server/*.js.map
+packages/context-manager/server/*.d.ts
+packages/context-manager/server/*.d.ts.map
+packages/context-manager/vite.config.js
+packages/context-manager/vite.config.js.map
+packages/context-manager/vite.config.d.ts
+packages/context-manager/vite.config.d.ts.map

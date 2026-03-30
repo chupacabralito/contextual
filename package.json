@@ -1,0 +1,19 @@
+{
+  "name": "contextual",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The context layer for AI-assisted design iteration",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:server": "npm run dev --workspace=@contextual/server",
+    "dev:react": "npm run dev --workspace=@contextual/react",
+    "typecheck": "npm run typecheck --workspaces",
+    "clean": "npm run clean --workspaces"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
