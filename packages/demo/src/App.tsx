@@ -16,12 +16,13 @@ export function App() {
             Contextual Demo
           </h1>
           <p style={{ color: '#6e6e73', fontSize: 14, lineHeight: 1.6 }}>
-            This is a sample checkout prototype. Use the Annotate button
-            (bottom-right) or press <kbd style={kbdStyle}>Cmd+Shift+A</kbd> to
-            start annotating elements. Try adding @mentions like{' '}
+            This is a sample checkout prototype. Use the bottom-right control or press{' '}
+            <kbd style={kbdStyle}>Cmd+Shift+A</kbd> to target an element. Instruct mode
+            queues multiple refinement instructions into a single pass, while Inspect
+            mode shows any saved history for an element. Local repositories still
+            autocomplete, but you can also type actions like{' '}
             <code style={codeStyle}>@research[checkout friction]</code> or{' '}
-            <code style={codeStyle}>@taste[stripe simplicity]</code> to your
-            annotations.
+            <code style={codeStyle}>@posthog[find checkout dropoff evidence]</code>.
           </p>
         </header>
 

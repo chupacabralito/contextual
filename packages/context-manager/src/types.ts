@@ -84,3 +84,31 @@ export interface SubmitResponse {
   handoffPath: string;
   copiedFiles: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Tool Configuration (talks to server on port 4700)
+// ---------------------------------------------------------------------------
+
+export interface ConfiguredTool {
+  name: string;
+  label: string;
+  enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Repository Browser
+// ---------------------------------------------------------------------------
+
+export interface RepositoryFile {
+  relativePath: string;
+  fileName: string;
+  type: ContextType;
+  size: number;
+  preview: string;
+}
+
+export interface RepositoryResponse {
+  contextRoot: string;
+  files: RepositoryFile[];
+  totalFiles: number;
+}

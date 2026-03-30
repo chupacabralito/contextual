@@ -11,13 +11,20 @@ import cors from 'cors';
 import express from 'express';
 import type {
   ContextType,
+  CreatePassRequest,
+  CreatePassResponse,
   HealthResponse,
+  InspectResponse,
+  Pass,
+  PassListResponse,
   ResolveRequest,
   ResolveResponse,
   ScaffoldRequest,
   ScaffoldResponse,
   ServerConfig,
   SuggestResponse,
+  ToolsResponse,
+  UpdateToolsRequest,
 } from '@contextual/shared';
 import {
   CONTEXT_TYPES,
@@ -27,6 +34,8 @@ import {
 import { ContextIndex } from './indexer/ContextIndex.js';
 import { resolveByDepth } from './resolver/depthController.js';
 import { scaffold } from './scaffold.js';
+import { PassStore } from './passes/PassStore.js';
+import { ToolStore } from './tools/ToolStore.js';
 
 interface ServerErrorResponse {
   error: string;
@@ -85,7 +94,9 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
 
   const app = express();
   const index = new ContextIndex(config.contextRoot);
-  const ready = index.ready();
+  const passStore = new PassStore(config.contextRoot);
+  const toolStore = new ToolStore(config.contextRoot);
+  const ready = Promise.all([index.ready(), passStore.initialize(), toolStore.initialize()]).then(() => {});
   let httpServer: http.Server | null = null;
 
   app.use(cors());
@@ -117,15 +128,40 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
       return;
     }
 
-    const type = parseSuggestType(req.query.type);
-    if (req.query.type && !type) {
-      res.status(400).json({ error: 'Query parameter "type" must be a valid context type' });
-      return;
-    }
+    // If type is a known ContextType, filter to that type.
+    // If type is provided but not a ContextType, we still accept it
+    // (it may be a configured tool name) but skip local index search.
+    const typeParam = typeof req.query.type === 'string' ? req.query.type : undefined;
+    const localType = typeParam ? parseSuggestType(typeParam) : undefined;
 
     try {
-      const suggestions = await index.suggest(partial, type);
-      res.json({ suggestions });
+      // Search local context index for known types (or all types if no filter)
+      const localSuggestions = (!typeParam || localType)
+        ? await index.suggest(partial, localType)
+        : [];
+
+      // Also include configured tools that match the partial
+      const normalizedPartial = partial.trim().toLowerCase();
+      const enabledTools = toolStore.getEnabledTools();
+      const toolSuggestions = enabledTools
+        .filter((tool) =>
+          tool.name.toLowerCase().startsWith(normalizedPartial) ||
+          tool.label.toLowerCase().includes(normalizedPartial)
+        )
+        .map((tool) => ({
+          text: tool.name,
+          type: tool.name,
+          preview: tool.label,
+        }));
+
+      // Merge: local suggestions first, then tool suggestions (deduplicated)
+      const seen = new Set(localSuggestions.map((s) => s.text));
+      const merged = [
+        ...localSuggestions,
+        ...toolSuggestions.filter((s) => !seen.has(s.text)),
+      ];
+
+      res.json({ suggestions: merged });
     } catch (error) {
       console.error('Suggest failed:', error);
       res.status(500).json({ error: 'Failed to generate suggestions' });
@@ -185,6 +221,140 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to scaffold project';
       res.status(400).json({ error: message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pass Endpoints (B4)
+  // ---------------------------------------------------------------------------
+
+  app.post('/passes', async (req, res: express.Response<CreatePassResponse | ServerErrorResponse>) => {
+    const body = req.body as Partial<CreatePassRequest>;
+
+    if (!body.pass || typeof body.pass !== 'object') {
+      res.status(400).json({ error: 'Request body must include a "pass" object' });
+      return;
+    }
+
+    const pass = body.pass as Partial<Pass>;
+    if (
+      typeof pass.id !== 'string' ||
+      typeof pass.timestamp !== 'string' ||
+      typeof pass.depth !== 'string' ||
+      !Array.isArray(pass.instructions)
+    ) {
+      res.status(400).json({ error: 'Pass must include id, timestamp, depth, and instructions[]' });
+      return;
+    }
+
+    try {
+      const filePath = await passStore.createPass(pass as Pass);
+      res.status(201).json({
+        id: pass.id,
+        path: filePath,
+        timestamp: pass.timestamp,
+      });
+    } catch (error) {
+      console.error('Create pass failed:', error);
+      res.status(500).json({ error: 'Failed to persist pass' });
+    }
+  });
+
+  app.get('/passes', async (_req, res: express.Response<PassListResponse | ServerErrorResponse>) => {
+    try {
+      const passes = await passStore.listPassSummaries();
+      res.json({ passes });
+    } catch (error) {
+      console.error('List passes failed:', error);
+      res.status(500).json({ error: 'Failed to list passes' });
+    }
+  });
+
+  app.get('/passes/:id', async (req, res: express.Response<Pass | ServerErrorResponse>) => {
+    try {
+      const pass = await passStore.getPass(req.params.id);
+      if (!pass) {
+        res.status(404).json({ error: `Pass not found: ${req.params.id}` });
+        return;
+      }
+      res.json(pass);
+    } catch (error) {
+      console.error('Get pass failed:', error);
+      res.status(500).json({ error: 'Failed to read pass' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Inspect Endpoint (B4)
+  // ---------------------------------------------------------------------------
+
+  app.get('/inspect', async (req, res: express.Response<InspectResponse | ServerErrorResponse>) => {
+    const selector = req.query.selector;
+    if (typeof selector !== 'string' || !selector.trim()) {
+      res.status(400).json({ error: 'Query parameter "selector" is required' });
+      return;
+    }
+
+    try {
+      const [passes, contextHistory] = await Promise.all([
+        passStore.getPassesForElement(selector),
+        passStore.getContextHistoryForElement(selector),
+      ]);
+
+      res.json({
+        selector,
+        passes,
+        contextHistory,
+      });
+    } catch (error) {
+      console.error('Inspect failed:', error);
+      res.status(500).json({ error: 'Failed to inspect element' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tools Endpoints (B9)
+  // ---------------------------------------------------------------------------
+
+  app.get('/tools', async (_req, res: express.Response<ToolsResponse | ServerErrorResponse>) => {
+    try {
+      const tools = toolStore.getTools();
+      res.json({ tools });
+    } catch (error) {
+      console.error('Get tools failed:', error);
+      res.status(500).json({ error: 'Failed to read tools' });
+    }
+  });
+
+  app.post('/tools', async (req, res: express.Response<ToolsResponse | ServerErrorResponse>) => {
+    const body = req.body as Partial<UpdateToolsRequest>;
+
+    if (!Array.isArray(body.tools)) {
+      res.status(400).json({ error: 'Request body must include a "tools" array' });
+      return;
+    }
+
+    // Validate each tool in the array
+    for (const tool of body.tools) {
+      if (
+        !tool ||
+        typeof tool !== 'object' ||
+        typeof tool.name !== 'string' ||
+        typeof tool.label !== 'string' ||
+        typeof tool.enabled !== 'boolean'
+      ) {
+        res.status(400).json({ error: 'Each tool must have name (string), label (string), and enabled (boolean)' });
+        return;
+      }
+    }
+
+    try {
+      await toolStore.setTools(body.tools);
+      const tools = toolStore.getTools();
+      res.json({ tools });
+    } catch (error) {
+      console.error('Update tools failed:', error);
+      res.status(500).json({ error: 'Failed to update tools' });
     }
   });
 

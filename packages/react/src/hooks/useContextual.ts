@@ -1,28 +1,33 @@
 // =============================================================================
 // Main Contextual Hook
 // =============================================================================
-// Orchestrates the full annotation workflow: targeting -> annotating ->
-// resolving -> previewing -> submitting pass to agent.
+// Orchestrates the Gate 1 workflow: targeting -> queueing instructions ->
+// submitting refinement passes, plus Inspect mode for element history.
 // =============================================================================
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type {
-  Annotation,
+  AnnotationMode,
+  CreatePassRequest,
+  Instruction,
   MentionResult,
+  Pass,
+  PreAttachedSnippet,
+  QueuedInstruction,
   ResolutionDepth,
-  StructuredOutput,
   TargetedElement,
 } from '@contextual/shared';
-import { parseMentions } from '../mentions/parser.js';
-import { formatOutput } from '../output/formatter.js';
+import { parseActions } from '../mentions/parser.js';
+import { formatPass } from '../output/formatter.js';
+import { useAnnotationQueue } from './useAnnotationQueue.js';
 
 /** Workflow state machine */
 export type ContextualState =
-  | 'idle'          // Toolbar visible, not targeting
-  | 'targeting'     // Waiting for element click/selection
-  | 'annotating'    // Element selected, typing annotation
-  | 'previewing'    // Context pre-searched, showing preview before submission
-  | 'submitted';    // Pass submitted to agent
+  | 'idle'
+  | 'targeting'
+  | 'annotating'
+  | 'inspecting'
+  | 'submitted';
 
 interface UseContextualOptions {
   /** Base URL for the local context server */
@@ -34,12 +39,14 @@ interface UseContextualOptions {
 interface UseContextualReturn {
   /** Current workflow state */
   state: ContextualState;
+  /** Current interaction mode */
+  mode: AnnotationMode;
+  /** Update interaction mode */
+  setMode: (mode: AnnotationMode) => void;
   /** Start targeting mode */
   startTargeting: () => void;
   /** Cancel and return to idle */
   cancel: () => void;
-  /** Go back to annotating from preview, preserving element + text */
-  backToAnnotating: () => void;
   /** The currently targeted element */
   targetedElement: TargetedElement | null;
   /** Set element from targeting hook */
@@ -48,16 +55,24 @@ interface UseContextualReturn {
   depth: ResolutionDepth;
   /** Update resolution depth */
   setDepth: (depth: ResolutionDepth) => void;
-  /** Pre-search local context and show preview */
+  /** Resolve context and add/update an instruction in the queue */
   resolveAndPreview: (annotationText: string) => Promise<void>;
-  /** Pre-searched local context results */
-  resolvedContext: MentionResult[];
-  /** Whether pre-search is in progress */
+  /** Queue of instructions being prepared for the next pass */
+  queue: QueuedInstruction[];
+  /** Number of queued instructions */
+  queueLength: number;
+  /** Remove a queued instruction */
+  removeFromQueue: (id: string) => void;
+  /** Reorder queued instructions */
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
+  /** Clear the queue */
+  clearQueue: () => void;
+  /** Re-open a queued instruction for editing */
+  editQueueItem: (id: string) => void;
+  /** Whether context resolution is in progress */
   isResolving: boolean;
-  /** Submit the structured pass (formats output for agent) */
+  /** Submit the queued pass (formats output for agent) */
   submitPass: () => Promise<void>;
-  /** The current annotation (after resolve) */
-  currentAnnotation: Annotation | null;
   /** The last annotation text (preserved for back-to-edit) */
   lastAnnotationText: string;
   /** Error message if something went wrong */
@@ -66,7 +81,23 @@ interface UseContextualReturn {
   structuredPrompt: string | null;
 }
 
-let annotationCounter = 0;
+let instructionCounter = 0;
+
+function buildInstructionId(): string {
+  instructionCounter += 1;
+  return `instruction_${instructionCounter}_${Date.now()}`;
+}
+
+function toPreAttachedContext(resolvedContext: MentionResult[]): PreAttachedSnippet[] {
+  return resolvedContext.flatMap((result) =>
+    result.matches.map((match) => ({
+      type: result.type,
+      query: result.query,
+      content: match.content,
+      source: match.source,
+    }))
+  );
+}
 
 /**
  * Main hook that orchestrates the Contextual annotation workflow.
@@ -76,156 +107,268 @@ export function useContextual({
   defaultDepth = 'standard',
 }: UseContextualOptions = {}): UseContextualReturn {
   const [state, setState] = useState<ContextualState>('idle');
+  const [mode, setModeState] = useState<AnnotationMode>('instruct');
   const [targetedElement, setTargetedElementState] = useState<TargetedElement | null>(null);
   const [depth, setDepth] = useState<ResolutionDepth>(defaultDepth);
-  const [resolvedContext, setResolvedContext] = useState<MentionResult[]>([]);
   const [isResolving, setIsResolving] = useState(false);
-  const [currentAnnotation, setCurrentAnnotation] = useState<Annotation | null>(null);
   const [lastAnnotationText, setLastAnnotationText] = useState('');
+  const [editingInstructionId, setEditingInstructionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [structuredPrompt, setStructuredPrompt] = useState<string | null>(null);
+  const submitResetTimeoutRef = useRef<number | null>(null);
+  const {
+    queue,
+    addToQueue,
+    removeFromQueue: removeFromQueueBase,
+    updateInstruction,
+    reorderQueue,
+    clearQueue: clearQueueBase,
+    queueLength,
+  } = useAnnotationQueue();
+
+  const resetSurfaceState = useCallback(() => {
+    setTargetedElementState(null);
+    setLastAnnotationText('');
+    setEditingInstructionId(null);
+    setIsResolving(false);
+  }, []);
 
   const startTargeting = useCallback(() => {
     setState('targeting');
-    setTargetedElementState(null);
-    setResolvedContext([]);
-    setCurrentAnnotation(null);
-    setLastAnnotationText('');
     setError(null);
     setStructuredPrompt(null);
-  }, []);
+    resetSurfaceState();
+  }, [resetSurfaceState]);
 
   const cancel = useCallback(() => {
     setState('idle');
-    setTargetedElementState(null);
-    setResolvedContext([]);
-    setCurrentAnnotation(null);
-    setLastAnnotationText('');
     setError(null);
     setStructuredPrompt(null);
-  }, []);
+    resetSurfaceState();
+  }, [resetSurfaceState]);
 
-  // Go back to annotating from preview -- preserves element and annotation text
-  const backToAnnotating = useCallback(() => {
-    setState('annotating');
-    setResolvedContext([]);
-    setError(null);
-    // targetedElement and lastAnnotationText are preserved
-  }, []);
-
-  const setTargetedElement = useCallback((el: TargetedElement) => {
-    setTargetedElementState(el);
-    setState('annotating');
-  }, []);
-
-  const resolveAndPreview = useCallback(
-    async (annotationText: string) => {
-      if (!targetedElement) return;
-
-      setLastAnnotationText(annotationText);
-      const mentions = parseMentions(annotationText);
-
-      // Build the annotation object
-      const annotation: Annotation = {
-        id: `ann_${++annotationCounter}_${Date.now()}`,
-        element: targetedElement,
-        rawText: annotationText,
-        mentions,
-        depth,
-        createdAt: new Date().toISOString(),
-      };
-
-      setCurrentAnnotation(annotation);
-
-      // If no @mentions, skip pre-search -- just go to preview with no context
-      if (mentions.length === 0) {
-        setResolvedContext([]);
-        setState('previewing');
+  const setMode = useCallback(
+    (nextMode: AnnotationMode) => {
+      if (state !== 'idle') {
         return;
       }
 
-      // Pre-search local context via the server
-      setIsResolving(true);
+      setModeState(nextMode);
       setError(null);
-
-      try {
-        const response = await fetch(`${serverUrl}/resolve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mentions: mentions.map((m) => ({ type: m.type, query: m.query })),
-            depth,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server returned ${response.status}`);
-        }
-
-        const data = await response.json();
-        setResolvedContext(data.results);
-        setState('previewing');
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Failed to reach context server';
-        setError(
-          `Could not reach context server at ${serverUrl}. Is it running? (${message})`
-        );
-        // Still show preview -- designer can submit without pre-attached context
-        setResolvedContext([]);
-        setState('previewing');
-      } finally {
-        setIsResolving(false);
-      }
     },
-    [targetedElement, depth, serverUrl]
+    [state]
   );
 
-  // Submit the structured pass for the agent
-  const submitPass = useCallback(async () => {
-    if (!currentAnnotation) return;
+  const setTargetedElement = useCallback(
+    (el: TargetedElement) => {
+      setTargetedElementState(el);
+      setError(null);
+      setState(mode === 'inspect' ? 'inspecting' : 'annotating');
+    },
+    [mode]
+  );
 
-    const output: StructuredOutput = {
-      annotation: currentAnnotation,
-      resolvedContext,
+  const editQueueItem = useCallback(
+    (id: string) => {
+      const instruction = queue.find((item) => item.id === id);
+
+      if (!instruction) {
+        return;
+      }
+
+      setModeState('instruct');
+      setEditingInstructionId(id);
+      setTargetedElementState(instruction.element);
+      setLastAnnotationText(instruction.rawText);
+      setDepth(instruction.depth);
+      setError(null);
+      setState('annotating');
+    },
+    [queue]
+  );
+
+  const removeFromQueue = useCallback(
+    (id: string) => {
+      removeFromQueueBase(id);
+
+      if (editingInstructionId === id) {
+        setEditingInstructionId(null);
+        setTargetedElementState(null);
+        setLastAnnotationText('');
+
+        if (state === 'annotating') {
+          setState('idle');
+        }
+      }
+    },
+    [editingInstructionId, removeFromQueueBase, state]
+  );
+
+  const clearQueue = useCallback(() => {
+    clearQueueBase();
+
+    if (state === 'annotating') {
+      setState('idle');
+    }
+
+    resetSurfaceState();
+  }, [clearQueueBase, resetSurfaceState, state]);
+
+  const resolveAndPreview = useCallback(
+    async (annotationText: string) => {
+      if (!targetedElement) {
+        return;
+      }
+
+      const rawText = annotationText.trim();
+      const actions = parseActions(rawText);
+      const existingInstruction = editingInstructionId
+        ? queue.find((item) => item.id === editingInstructionId)
+        : null;
+
+      setLastAnnotationText(rawText);
+      setError(null);
+      let resolvedContext: MentionResult[] = [];
+
+      if (actions.length > 0) {
+        setIsResolving(true);
+
+        try {
+          const response = await fetch(`${serverUrl}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mentions: actions.map((action) => ({
+                type: action.source,
+                query: action.instruction,
+              })),
+              depth,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+          }
+
+          const data = (await response.json()) as { results?: MentionResult[] };
+          resolvedContext = data.results ?? [];
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : 'Failed to reach context server';
+          setError(
+            `Could not reach context server at ${serverUrl}. The instruction was queued without pre-attached context. (${message})`
+          );
+        } finally {
+          setIsResolving(false);
+        }
+      }
+
+      const queuedInstruction: QueuedInstruction = {
+        id: existingInstruction?.id ?? buildInstructionId(),
+        element: targetedElement,
+        rawText,
+        actions,
+        depth,
+        createdAt: existingInstruction?.createdAt ?? new Date().toISOString(),
+        resolvedContext,
+      };
+
+      if (existingInstruction) {
+        updateInstruction(existingInstruction.id, queuedInstruction);
+      } else {
+        addToQueue(queuedInstruction);
+      }
+
+      setStructuredPrompt(null);
+      setState('idle');
+      resetSurfaceState();
+    },
+    [
+      addToQueue,
       depth,
+      editingInstructionId,
+      queue,
+      resetSurfaceState,
+      serverUrl,
+      targetedElement,
+      updateInstruction,
+    ]
+  );
+
+  const submitPass = useCallback(async () => {
+    if (queue.length === 0) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const instructions: Instruction[] = queue.map((queuedInstruction) => ({
+      element: queuedInstruction.element,
+      rawText: queuedInstruction.rawText,
+      actions: queuedInstruction.actions,
+      preAttachedContext: toPreAttachedContext(queuedInstruction.resolvedContext),
+    }));
+    const pass: Pass = {
+      id: `pass_${Date.now()}`,
+      timestamp,
+      depth,
+      instructions,
     };
 
-    const prompt = formatOutput(output);
+    const prompt = formatPass(queue, depth);
     setStructuredPrompt(prompt);
 
     try {
       await navigator.clipboard.writeText(prompt);
-      setState('submitted');
 
-      // Reset after a brief moment
-      setTimeout(() => {
+      const payload: CreatePassRequest = { pass };
+      void fetch(`${serverUrl}/passes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {
+        // Best effort only. Clipboard export is the critical path for the user.
+      });
+
+      clearQueueBase();
+      setError(null);
+      setState('submitted');
+      setTargetedElementState(null);
+      setLastAnnotationText('');
+      setEditingInstructionId(null);
+
+      if (submitResetTimeoutRef.current !== null) {
+        window.clearTimeout(submitResetTimeoutRef.current);
+      }
+
+      submitResetTimeoutRef.current = window.setTimeout(() => {
         setState('idle');
-        setTargetedElementState(null);
-        setResolvedContext([]);
-        setCurrentAnnotation(null);
-        setLastAnnotationText('');
         setStructuredPrompt(null);
+        submitResetTimeoutRef.current = null;
       }, 1500);
     } catch {
-      setError('Failed to copy structured prompt');
+      setError('Failed to copy refinement pass to the clipboard');
     }
-  }, [currentAnnotation, resolvedContext, depth]);
+  }, [clearQueueBase, depth, queue, serverUrl]);
 
   return {
     state,
+    mode,
+    setMode,
     startTargeting,
     cancel,
-    backToAnnotating,
     targetedElement,
     setTargetedElement,
     depth,
     setDepth,
     resolveAndPreview,
-    resolvedContext,
+    queue,
+    queueLength,
+    removeFromQueue,
+    reorderQueue,
+    clearQueue,
+    editQueueItem,
     isResolving,
     submitPass,
-    currentAnnotation,
     lastAnnotationText,
     error,
     structuredPrompt,

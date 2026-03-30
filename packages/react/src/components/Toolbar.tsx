@@ -6,28 +6,35 @@
 // =============================================================================
 
 import React from 'react';
+import type { AnnotationMode } from '@contextual/shared';
 import type { ContextualState } from '../hooks/useContextual.js';
 
 interface ToolbarProps {
   /** Current workflow state */
   state: ContextualState;
+  /** Current interaction mode */
+  mode: AnnotationMode;
+  /** Update interaction mode */
+  onModeChange: (mode: AnnotationMode) => void;
   /** Start targeting mode */
   onStartTargeting: () => void;
   /** Cancel current action */
   onCancel: () => void;
+  /** Current queued instruction count */
+  queueLength: number;
 }
 
-const STATE_LABELS: Record<ContextualState, string> = {
-  idle: 'Annotate',
-  targeting: 'Click an element...',
-  annotating: 'Annotating',
-  previewing: 'Preview',
-  submitted: 'Submitted!',
-};
-
-export function Toolbar({ state, onStartTargeting, onCancel }: ToolbarProps) {
+export function Toolbar({
+  state,
+  mode,
+  onModeChange,
+  onStartTargeting,
+  onCancel,
+  queueLength,
+}: ToolbarProps) {
   const isActive = state !== 'idle';
   const isSubmitted = state === 'submitted';
+  const mainLabel = getMainLabel(state, mode, queueLength);
 
   return (
     <div
@@ -44,6 +51,44 @@ export function Toolbar({ state, onStartTargeting, onCancel }: ToolbarProps) {
           '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       }}
     >
+      {state === 'idle' && (
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            padding: 4,
+            backgroundColor: '#111827',
+            border: '1px solid rgba(148, 163, 184, 0.18)',
+            borderRadius: 10,
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+          }}
+        >
+          {(['instruct', 'inspect'] as const).map((candidateMode) => (
+            <button
+              key={candidateMode}
+              onClick={() => onModeChange(candidateMode)}
+              style={{
+                padding: '7px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                color: mode === candidateMode ? '#f8fafc' : '#94a3b8',
+                backgroundColor:
+                  mode === candidateMode ? 'rgba(59, 130, 246, 0.28)' : 'transparent',
+                border:
+                  mode === candidateMode
+                    ? '1px solid rgba(96, 165, 250, 0.45)'
+                    : '1px solid transparent',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {candidateMode === 'instruct' ? 'Instruct' : 'Inspect'}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Cancel button (when active) */}
       {isActive && !isSubmitted && (
         <button
@@ -85,8 +130,32 @@ export function Toolbar({ state, onStartTargeting, onCancel }: ToolbarProps) {
           letterSpacing: '0.02em',
         }}
       >
-        {STATE_LABELS[state]}
+        {mainLabel}
       </button>
     </div>
   );
+}
+
+function getMainLabel(
+  state: ContextualState,
+  mode: AnnotationMode,
+  queueLength: number
+): string {
+  switch (state) {
+    case 'idle':
+      if (mode === 'inspect') {
+        return 'Inspect Element';
+      }
+      return queueLength > 0 ? `Add Instruction (${queueLength} queued)` : 'Add Instruction';
+    case 'targeting':
+      return mode === 'inspect' ? 'Select an Element...' : 'Click an Element...';
+    case 'annotating':
+      return 'Write Instruction';
+    case 'inspecting':
+      return 'Decision Trail';
+    case 'submitted':
+      return 'Pass Copied';
+    default:
+      return 'Contextual';
+  }
 }

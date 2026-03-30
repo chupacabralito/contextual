@@ -1,14 +1,14 @@
 // =============================================================================
 // @Mention Parser
 // =============================================================================
-// Parses annotation text to extract @type[query] mentions.
+// Parses annotation text to extract @source[instruction] directives.
 // Examples:
 //   "Fix this @research[checkout friction]" -> [{type: "research", query: "checkout friction", ...}]
 //   "Use @taste[stripe clarity] and @design-system[button primary]" -> [...]
 // =============================================================================
 
-import { CONTEXT_TYPES } from '@contextual/shared';
-import type { ContextType, ParsedMention } from '@contextual/shared';
+import { CONTEXT_TYPES, isContextType } from '@contextual/shared';
+import type { ContextType, ParsedAction, ParsedMention } from '@contextual/shared';
 
 /**
  * Regex to match @type[query] patterns in annotation text.
@@ -17,40 +17,61 @@ import type { ContextType, ParsedMention } from '@contextual/shared';
 const MENTION_REGEX = /@([\w-]+)\[([^\]]+)\]/g;
 
 /**
- * Parse all @mentions from an annotation string.
+ * Parse all @source[instruction] directives from an annotation string.
+ * Accepts any source string; validation is handled separately by the UI.
+ *
+ * @param text - The raw annotation text
+ * @returns Array of parsed actions with positions
+ */
+export function parseActions(text: string): ParsedAction[] {
+  const actions: ParsedAction[] = [];
+  let match: RegExpExecArray | null;
+
+  MENTION_REGEX.lastIndex = 0;
+
+  while ((match = MENTION_REGEX.exec(text)) !== null) {
+    actions.push({
+      source: match[1]!.trim(),
+      instruction: match[2]!.trim(),
+      startIndex: match.index,
+      endIndex: match.index + match[0].length,
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * Parse all local-context @mentions from an annotation string.
  *
  * @param text - The raw annotation text
  * @returns Array of parsed mentions with positions
  */
 export function parseMentions(text: string): ParsedMention[] {
-  const mentions: ParsedMention[] = [];
-  let match: RegExpExecArray | null;
-
-  // Reset regex state
-  MENTION_REGEX.lastIndex = 0;
-
-  while ((match = MENTION_REGEX.exec(text)) !== null) {
-    const type = match[1] as string;
-
-    // Only include valid context types
-    if (isValidContextType(type)) {
-      mentions.push({
-        type: type as ContextType,
-        query: match[2]!.trim(),
-        startIndex: match.index,
-        endIndex: match.index + match[0].length,
-      });
-    }
-  }
-
-  return mentions;
+  return parseActions(text)
+    .filter((action): action is ParsedAction & { source: ContextType } =>
+      isLocalContextType(action.source)
+    )
+    .map((action) => ({
+      type: action.source,
+      query: action.instruction,
+      startIndex: action.startIndex,
+      endIndex: action.endIndex,
+    }));
 }
 
 /**
  * Check if a string is a valid context type.
  */
 export function isValidContextType(type: string): type is ContextType {
-  return CONTEXT_TYPES.includes(type as ContextType);
+  return isLocalContextType(type);
+}
+
+/**
+ * Check if a source maps to one of the 5 local context repositories.
+ */
+export function isLocalContextType(source: string): source is ContextType {
+  return isContextType(source);
 }
 
 /**
@@ -66,9 +87,9 @@ export function stripMentions(text: string): string {
  * Called while the user is typing to suggest context types.
  *
  * @param partial - The partial text after @, e.g., "res" or "taste["
- * @returns Matching context types
+ * @returns Matching local context types
  */
-export function getTypeCompletions(partial: string): ContextType[] {
+export function getTypeCompletions(partial: string): string[] {
   const lower = partial.toLowerCase();
   return CONTEXT_TYPES.filter((t) => t.startsWith(lower));
 }

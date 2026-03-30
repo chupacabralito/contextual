@@ -13,7 +13,10 @@ import type {
   ResolutionDepth,
   StructuredOutput,
   ContextMatch,
+  QueuedInstruction,
+  TargetedElement,
 } from '@contextual/shared';
+import { stripMentions } from '../mentions/parser.js';
 
 /**
  * Format a structured output as markdown for clipboard export.
@@ -27,14 +30,11 @@ export function formatOutput(output: StructuredOutput): string {
   parts.push('');
 
   // Element info
-  parts.push(formatElement(annotation));
+  parts.push(formatElement(annotation.element));
   parts.push('');
 
   // Annotation text (strip @mentions for readability)
-  const plainText = annotation.rawText
-    .replace(/@[\w-]+\[[^\]]+\]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const plainText = stripMentions(annotation.rawText);
   if (plainText) {
     parts.push(`**Annotation:** ${plainText}`);
     parts.push('');
@@ -55,18 +55,75 @@ export function formatOutput(output: StructuredOutput): string {
 }
 
 /**
+ * Format a queued multi-instruction pass as markdown for clipboard export.
+ */
+export function formatPass(
+  queue: QueuedInstruction[],
+  depth: ResolutionDepth
+): string {
+  const parts: string[] = [];
+
+  parts.push('## Refinement Pass');
+  parts.push('');
+  parts.push(`**Depth:** ${capitalizeFirst(depth)}`);
+  parts.push(`**Instructions:** ${queue.length}`);
+
+  queue.forEach((instruction, index) => {
+    parts.push('');
+    parts.push('---');
+    parts.push('');
+    parts.push(`### Instruction ${index + 1}`);
+    parts.push(formatElement(instruction.element));
+
+    const plainText = stripMentions(instruction.rawText);
+    if (plainText) {
+      parts.push(`**Instruction:** ${plainText}`);
+    }
+
+    parts.push('**Actions:**');
+    if (instruction.actions.length > 0) {
+      for (const action of instruction.actions) {
+        parts.push(`- @${action.source}[${action.instruction}]`);
+      }
+    } else {
+      parts.push('- None');
+    }
+
+    const snippets = instruction.resolvedContext.flatMap((result) =>
+      result.matches.map((match) => ({
+        type: result.type,
+        query: result.query,
+        match,
+      }))
+    );
+
+    if (snippets.length > 0) {
+      parts.push('');
+      parts.push('**Pre-attached context:**');
+
+      for (const snippet of snippets) {
+        parts.push(`@${snippet.type}[${snippet.query}]:`);
+        parts.push(formatMatch(snippet.match, depth));
+      }
+    }
+  });
+
+  return parts.join('\n').trimEnd();
+}
+
+/**
  * Format element information.
  */
-function formatElement(annotation: Annotation): string {
-  const { element } = annotation;
-  const { label, selector, boundingBox } = element;
+function formatElement(element: TargetedElement | Annotation): string {
+  const target = 'element' in element ? element.element : element;
+  const { label, selector, boundingBox } = target;
 
   const bbox = `${boundingBox.width}x${boundingBox.height} at [${boundingBox.x}, ${boundingBox.y}]`;
 
   let line = `**Element:** ${capitalizeFirst(label)} (${selector}, ${bbox})`;
 
-  if (element.selectedText) {
-    line += `\n**Selected text:** "${element.selectedText}"`;
+  if (target.selectedText) {
+    line += `\n**Selected text:** "${target.selectedText}"`;
   }
 
   return line;

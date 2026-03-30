@@ -43,6 +43,7 @@ export async function scaffold(request: ScaffoldRequest): Promise<ScaffoldRespon
   await fs.mkdir(projectPath, { recursive: false });
 
   try {
+    // Create context type folders with README files
     await Promise.all(
       DEFAULT_CONTEXT_FOLDERS.map(async (folder) => {
         const folderPath = path.join(projectPath, folder);
@@ -53,6 +54,16 @@ export async function scaffold(request: ScaffoldRequest): Promise<ScaffoldRespon
           'utf8'
         );
       })
+    );
+
+    // Create /passes folder for pass persistence
+    await fs.mkdir(path.join(projectPath, 'passes'));
+
+    // Create empty tools.json for tool configuration
+    await fs.writeFile(
+      path.join(projectPath, 'tools.json'),
+      '[]',
+      'utf8'
     );
   } catch (error) {
     await fs.rm(projectPath, { recursive: true, force: true });

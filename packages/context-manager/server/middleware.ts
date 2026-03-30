@@ -201,6 +201,47 @@ async function copyImportedFiles(
   return copiedFiles;
 }
 
+async function buildRepositoryResponse(config: RuntimeConfig) {
+  const files: Array<{
+    relativePath: string;
+    fileName: string;
+    type: ContextType;
+    size: number;
+    preview: string;
+  }> = [];
+
+  for (const type of CONTEXT_TYPES) {
+    const directory = path.join(config.contextRoot, type);
+    if (!(await exists(directory))) continue;
+
+    const filePaths = (await listFilesRecursively(directory)).filter((filePath) =>
+      ['.md', '.json', '.txt'].includes(path.extname(filePath).toLowerCase())
+    );
+
+    for (const filePath of filePaths) {
+      try {
+        const stat = await fs.stat(filePath);
+        const content = await fs.readFile(filePath, 'utf8');
+        files.push({
+          relativePath: path.relative(config.contextRoot, filePath),
+          fileName: path.basename(filePath),
+          type,
+          size: stat.size,
+          preview: truncate(content, 400),
+        });
+      } catch {
+        // Skip files we can't read
+      }
+    }
+  }
+
+  return {
+    contextRoot: config.contextRoot,
+    files,
+    totalFiles: files.length,
+  };
+}
+
 async function readJson(req: Connect.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -238,6 +279,12 @@ export function localFilesPlugin(): Plugin {
 
           if (req.method === 'GET' && url.pathname === '/api/previous-projects') {
             const payload = await buildPreviousProjectsResponse(config);
+            sendJson(res, 200, payload);
+            return;
+          }
+
+          if (req.method === 'GET' && url.pathname === '/api/repository') {
+            const payload = await buildRepositoryResponse(config);
             sendJson(res, 200, payload);
             return;
           }

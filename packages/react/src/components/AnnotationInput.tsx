@@ -7,12 +7,14 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ContextType, ResolutionDepth } from '@contextual/shared';
+import type { ResolutionDepth } from '@contextual/shared';
 import { useMentionParser } from '../hooks/useMentionParser.js';
 
 interface AnnotationInputProps {
   /** Position near the targeted element */
   position: { x: number; y: number };
+  /** Base URL for remote autocomplete / resolve endpoints */
+  serverUrl?: string;
   /** Called when user submits the annotation */
   onSubmit: (text: string) => void;
   /** Called when user cancels */
@@ -21,7 +23,7 @@ interface AnnotationInputProps {
   depth: ResolutionDepth;
   /** Update depth level */
   onDepthChange: (depth: ResolutionDepth) => void;
-  /** Pre-fill text when returning from preview via back button */
+  /** Pre-fill text when editing an existing queued instruction */
   initialText?: string;
 }
 
@@ -36,17 +38,18 @@ const DEPTHS: ResolutionDepth[] = ['light', 'standard', 'detailed', 'full'];
 
 export function AnnotationInput({
   position,
+  serverUrl,
   onSubmit,
   onCancel,
   depth,
   onDepthChange,
   initialText = '',
 }: AnnotationInputProps) {
-  const parser = useMentionParser();
+  const parser = useMentionParser({ serverUrl });
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Initialize with pre-fill text (e.g. when returning from preview)
+  // Initialize with pre-fill text when editing an existing instruction
   useEffect(() => {
     if (initialText) {
       parser.setText(initialText);
@@ -75,7 +78,7 @@ export function AnnotationInput({
   }, [parser]);
 
   const applyCompletion = useCallback(
-    (completion: ContextType) => {
+    (completion: string) => {
       if (parser.mentionStartIndex === -1) return;
 
       const cursorPos = inputRef.current?.selectionStart ?? parser.text.length;
@@ -172,7 +175,7 @@ export function AnnotationInput({
           onChange={handleChange}
           onSelect={handleSelect}
           onKeyDown={handleKeyDown}
-          placeholder='Type annotation... use @research[query] for context'
+          placeholder='Type instruction... local repositories autocomplete, any @source[...] is valid'
           rows={3}
           style={{
             width: '100%',
@@ -221,6 +224,14 @@ export function AnnotationInput({
             ))}
           </div>
         )}
+
+        <div style={{ marginTop: 6, fontSize: 11, color: '#606078', lineHeight: 1.5 }}>
+          Local repositories autocomplete here, but you can also type custom sources like{' '}
+          <code style={{ fontFamily: '"SF Mono", Menlo, monospace', color: '#8fb7ff' }}>
+            @posthog[...]
+          </code>
+          .
+        </div>
 
         {/* Bottom bar: depth selector + submit hint */}
         <div

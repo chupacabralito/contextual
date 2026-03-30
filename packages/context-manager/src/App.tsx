@@ -3,9 +3,13 @@ import { submitHandoff } from './api/handoff.js';
 import { DefaultContextView } from './components/DefaultContextView.js';
 import { ImportView } from './components/ImportView.js';
 import { PasteZone } from './components/PasteZone.js';
+import { RepositoryView } from './components/RepositoryView.js';
 import { SummaryView } from './components/SummaryView.js';
+import { ToolConfigView } from './components/ToolConfigView.js';
 import { useContextRoot } from './hooks/useContextRoot.js';
 import { usePreviousProjects } from './hooks/usePreviousProjects.js';
+import { useRepository } from './hooks/useRepository.js';
+import { useTools } from './hooks/useTools.js';
 import type {
   ContextType,
   ImportSelection,
@@ -14,7 +18,7 @@ import type {
   SubmitResponse,
 } from './types.js';
 
-const STEPS = ['Defaults', 'Paste', 'Import', 'Submit'] as const;
+const STEPS = ['Defaults', 'Paste', 'Import', 'Submit', 'Tools', 'Repository'] as const;
 
 function createEntry(): PastedEntry {
   return {
@@ -28,6 +32,8 @@ function createEntry(): PastedEntry {
 export function App() {
   const contextRoot = useContextRoot();
   const previousProjects = usePreviousProjects();
+  const toolsState = useTools();
+  const repository = useRepository();
   const [currentStep, setCurrentStep] = useState(0);
   const [expanded, setExpanded] = useState<ContextType | null>(null);
   const [included, setIncluded] = useState<ContextType[]>([]);
@@ -227,6 +233,26 @@ export function App() {
             submitResult={submitResult}
             error={submitError}
             onSubmit={handleSubmit}
+          />
+        )}
+
+        {currentStep === 4 && (
+          <ToolConfigView
+            tools={toolsState.tools}
+            isLoading={toolsState.isLoading}
+            isSaving={toolsState.isSaving}
+            error={toolsState.error}
+            onToggle={toolsState.toggleTool}
+            onAdd={toolsState.addTool}
+            onRemove={toolsState.removeTool}
+          />
+        )}
+
+        {currentStep === 5 && (
+          <RepositoryView
+            data={repository.data}
+            isLoading={repository.isLoading}
+            error={repository.error}
           />
         )}
       </div>

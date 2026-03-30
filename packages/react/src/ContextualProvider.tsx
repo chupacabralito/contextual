@@ -2,7 +2,7 @@
 // Contextual Provider
 // =============================================================================
 // Top-level component that wraps the user's app. Renders the toolbar,
-// element highlights, annotation input, and context preview.
+// element highlights, annotation input, queue panel, and inspect panel.
 //
 // Usage:
 //   import { ContextualProvider } from '@contextual/react';
@@ -18,7 +18,8 @@ import { useElementTargeting } from './hooks/useElementTargeting.js';
 import { Toolbar } from './components/Toolbar.js';
 import { ElementHighlight } from './components/ElementHighlight.js';
 import { AnnotationInput } from './components/AnnotationInput.js';
-import { ContextPreview } from './components/ContextPreview.js';
+import { QueuePanel } from './components/QueuePanel.js';
+import { InspectPanel } from './components/InspectPanel.js';
 
 interface ContextualProviderProps {
   children: React.ReactNode;
@@ -91,7 +92,7 @@ export function ContextualProvider({
 
       {/* Selected element highlight */}
       {contextual.targetedElement &&
-        (contextual.state === 'annotating' || contextual.state === 'previewing') && (
+        (contextual.state === 'annotating' || contextual.state === 'inspecting') && (
           <ElementHighlight
             boundingBox={contextual.targetedElement.boundingBox}
             variant="selected"
@@ -99,7 +100,9 @@ export function ContextualProvider({
         )}
 
       {/* Annotation input */}
-      {contextual.state === 'annotating' && contextual.targetedElement && (
+      {contextual.state === 'annotating' &&
+        contextual.mode === 'instruct' &&
+        contextual.targetedElement && (
         <AnnotationInput
           position={{
             x: contextual.targetedElement.boundingBox.x,
@@ -107,6 +110,7 @@ export function ContextualProvider({
               contextual.targetedElement.boundingBox.y +
               contextual.targetedElement.boundingBox.height,
           }}
+          serverUrl={serverUrl ?? 'http://localhost:4700'}
           onSubmit={contextual.resolveAndPreview}
           onCancel={contextual.cancel}
           depth={contextual.depth}
@@ -115,24 +119,38 @@ export function ContextualProvider({
         />
       )}
 
-      {/* Context preview */}
-      {contextual.state === 'previewing' && contextual.currentAnnotation && (
-        <ContextPreview
-          annotation={contextual.currentAnnotation}
-          resolvedContext={contextual.resolvedContext}
+      {/* Queue panel */}
+      {contextual.queueLength > 0 && (
+        <QueuePanel
+          queue={contextual.queue}
           depth={contextual.depth}
-          isResolving={contextual.isResolving}
-          onSubmit={contextual.submitPass}
-          onBack={contextual.backToAnnotating}
+          onDepthChange={contextual.setDepth}
+          onEditInstruction={contextual.editQueueItem}
+          onRemoveInstruction={contextual.removeFromQueue}
+          onReorderInstruction={contextual.reorderQueue}
+          onClearQueue={contextual.clearQueue}
+          onSubmitPass={contextual.submitPass}
           error={contextual.error}
+        />
+      )}
+
+      {/* Inspect panel */}
+      {contextual.state === 'inspecting' && contextual.targetedElement && (
+        <InspectPanel
+          target={contextual.targetedElement}
+          serverUrl={serverUrl ?? 'http://localhost:4700'}
+          onClose={contextual.cancel}
         />
       )}
 
       {/* Toolbar */}
       <Toolbar
         state={contextual.state}
+        mode={contextual.mode}
+        onModeChange={contextual.setMode}
         onStartTargeting={contextual.startTargeting}
         onCancel={contextual.cancel}
+        queueLength={contextual.queueLength}
       />
     </>
   );
