@@ -1,10 +1,11 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
 *.tsbuildinfo
-.DS_Store
-*.log
-.env
-.env.local
+
+# TypeScript emit from config and local middleware files
 packages/context-manager/server/*.js
 packages/context-manager/server/*.js.map
 packages/context-manager/server/*.d.ts
@@ -13,3 +14,13 @@ packages/context-manager/vite.config.js
 packages/context-manager/vite.config.js.map
 packages/context-manager/vite.config.d.ts
 packages/context-manager/vite.config.d.ts.map
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
