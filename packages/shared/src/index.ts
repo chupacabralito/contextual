@@ -13,13 +13,15 @@
 // Context Types
 // -----------------------------------------------------------------------------
 
-/** The five local context repository types */
+/** The seven local context repository types */
 export type ContextType =
   | 'research'
   | 'taste'
   | 'strategy'
   | 'design-system'
-  | 'stakeholders';
+  | 'stakeholders'
+  | 'technical'
+  | 'business';
 
 /** All valid local context types */
 export const CONTEXT_TYPES: ContextType[] = [
@@ -28,6 +30,8 @@ export const CONTEXT_TYPES: ContextType[] = [
   'strategy',
   'design-system',
   'stakeholders',
+  'technical',
+  'business',
 ];
 
 /** How much context depth to return. Lighter = fewer tokens = cheaper. */
@@ -35,6 +39,249 @@ export type ResolutionDepth = 'light' | 'standard' | 'detailed' | 'full';
 
 /** Annotation mode: Instruct writes refinement instructions, Inspect shows decision trail */
 export type AnnotationMode = 'instruct' | 'inspect';
+
+// -----------------------------------------------------------------------------
+// Corpus Types (Context Manager)
+// -----------------------------------------------------------------------------
+// Types for the organizational context corpus. Each ContextType has a compiled
+// markdown file with YAML frontmatter and a _sources/ directory of raw inputs.
+// -----------------------------------------------------------------------------
+
+/** Metadata for a single section within a compiled context file */
+export interface SectionMeta {
+  /** Section title (matches the ## heading in the markdown) */
+  title: string;
+  /** Line number where this section starts (1-indexed) */
+  startLine: number;
+  /** Line number where this section ends (inclusive) */
+  endLine: number;
+  /** Approximate token count for this section (word count * 1.3) */
+  tokenEstimate: number;
+}
+
+/** Frontmatter metadata for a compiled.md file */
+export interface CompiledFileMeta {
+  /** The context type this file belongs to */
+  type: ContextType;
+  /** Human-readable title (e.g., "Research Context") */
+  title: string;
+  /** ISO timestamp of last compilation */
+  lastCompiled: string;
+  /** Number of raw source files that were compiled */
+  sourceCount: number;
+  /** Section-level table of contents */
+  sections: SectionMeta[];
+  /** Total approximate token count across all sections */
+  totalTokenEstimate: number;
+}
+
+/** Summary of one context type in the corpus */
+export interface CorpusTypeEntry {
+  /** The context type */
+  type: ContextType;
+  /** Whether a compiled.md exists for this type */
+  exists: boolean;
+  /** Parsed frontmatter from compiled.md (null if file doesn't exist or is invalid) */
+  meta: CompiledFileMeta | null;
+  /** Number of files in _sources/ */
+  sourceCount: number;
+}
+
+/** Response for GET /api/corpus */
+export interface CorpusResponse {
+  /** Path to the context root directory */
+  contextRoot: string;
+  /** Status for each of the 7 context types */
+  types: CorpusTypeEntry[];
+  /** Sum of all token estimates across all types */
+  totalTokenEstimate: number;
+}
+
+/** Response for GET /api/corpus/:type */
+export interface CompiledFileResponse {
+  /** Parsed frontmatter */
+  meta: CompiledFileMeta;
+  /** Full markdown body (everything after the frontmatter) */
+  content: string;
+}
+
+/** Response for GET /api/corpus/:type/sections/:index */
+export interface SectionResponse {
+  /** The section metadata */
+  section: SectionMeta;
+  /** The section content (markdown text) */
+  content: string;
+}
+
+/** A raw source file in _sources/ */
+export interface SourceFile {
+  /** Filename (e.g., "article-1.md") */
+  filename: string;
+  /** File size in bytes */
+  size: number;
+  /** Content preview (first 400 characters) */
+  preview: string;
+  /** ISO timestamp when the file was added (from file stat) */
+  addedAt: string;
+}
+
+/** Response for GET /api/corpus/:type/sources */
+export interface SourceListResponse {
+  /** The context type */
+  type: ContextType;
+  /** List of raw source files */
+  sources: SourceFile[];
+}
+
+/** Response for GET /api/corpus/:type/sources/:filename */
+export interface SourceContentResponse {
+  /** The filename */
+  filename: string;
+  /** Full file content */
+  content: string;
+}
+
+/** Request body for POST /api/corpus/:type/sources */
+export interface AddSourceRequest {
+  /** Filename (auto-generated as paste-{timestamp}.md if omitted) */
+  filename?: string;
+  /** The content to write */
+  content: string;
+  /** Optional label (written as a comment at the top of the file) */
+  label?: string;
+}
+
+/** Response for POST /api/corpus/:type/sources */
+export interface AddSourceResponse {
+  /** The final filename used */
+  filename: string;
+  /** Full path to the written file */
+  path: string;
+}
+
+/** Request body for PUT /api/corpus/:type/compiled */
+export interface UpdateCompiledRequest {
+  /** Full markdown content including YAML frontmatter */
+  content: string;
+}
+
+/** Request body for POST /api/corpus/import */
+export interface ImportRequest {
+  /** Path to the source context root to import from */
+  sourcePath: string;
+  /** Which context types to import */
+  types: ContextType[];
+}
+
+/** Response for POST /api/corpus/import */
+export interface ImportResponse {
+  /** What was imported, grouped by type */
+  imported: Array<{
+    type: ContextType;
+    files: string[];
+  }>;
+}
+
+// -----------------------------------------------------------------------------
+// Legacy Context Manager Wizard Types (temporary compatibility)
+// -----------------------------------------------------------------------------
+
+/** @deprecated Legacy preview model from the pre-corpus context manager UI */
+export interface ContextFilePreview {
+  relativePath: string;
+  fileName: string;
+  summary: string;
+  preview: string;
+}
+
+/** @deprecated Legacy grouped context-root response model */
+export interface ContextTypeGroup {
+  type: ContextType;
+  fileCount: number;
+  summary: string;
+  files: ContextFilePreview[];
+}
+
+/** @deprecated Legacy default-context overview response */
+export interface ContextRootResponse {
+  contextRoot: string;
+  projectPath: string;
+  previousProjectsPath: string;
+  groups: ContextTypeGroup[];
+}
+
+/** @deprecated Legacy import preview type */
+export interface PreviousProjectSummary {
+  name: string;
+  path: string;
+  groups: Array<{
+    type: ContextType;
+    fileCount: number;
+    files: string[];
+  }>;
+}
+
+/** @deprecated Legacy import preview response */
+export interface PreviousProjectsResponse {
+  projects: PreviousProjectSummary[];
+}
+
+/** @deprecated Legacy pasted-entry model */
+export interface PastedEntry {
+  id: string;
+  label: string;
+  suggestedType: ContextType | '';
+  content: string;
+}
+
+/** @deprecated Legacy import-selection model */
+export interface ImportSelection {
+  projectName: string;
+  projectPath: string;
+  importedTypes: ContextType[];
+  files: string[];
+}
+
+/** @deprecated Legacy handoff payload */
+export interface HandoffPayload {
+  timestamp: string;
+  defaultContext: {
+    included: ContextType[];
+    excluded: ContextType[];
+  };
+  pastedContent: Array<{
+    label: string;
+    suggestedType?: ContextType;
+    content: string;
+  }>;
+  importedFrom?: {
+    projectName: string;
+    importedTypes: ContextType[];
+    files: string[];
+  };
+}
+
+/** @deprecated Legacy submit response */
+export interface SubmitResponse {
+  handoffPath: string;
+  copiedFiles: string[];
+}
+
+/** @deprecated Legacy repository-browser file entry */
+export interface RepositoryFile {
+  relativePath: string;
+  fileName: string;
+  type: ContextType;
+  size: number;
+  preview: string;
+}
+
+/** @deprecated Legacy repository-browser response */
+export interface RepositoryResponse {
+  contextRoot: string;
+  files: RepositoryFile[];
+  totalFiles: number;
+}
 
 // -----------------------------------------------------------------------------
 // @Mention Types (legacy - preserved for backward compatibility)
@@ -451,13 +698,15 @@ export const DEFAULT_CONTEXT_FOLDERS: ContextType[] = [
   'strategy',
   'design-system',
   'stakeholders',
+  'technical',
+  'business',
 ];
 
 // -----------------------------------------------------------------------------
 // Utility: Type guard for ContextType
 // -----------------------------------------------------------------------------
 
-/** Check if a string is one of the 5 local context types */
+/** Check if a string is one of the 7 local context types */
 export function isContextType(value: string): value is ContextType {
   return CONTEXT_TYPES.includes(value as ContextType);
 }

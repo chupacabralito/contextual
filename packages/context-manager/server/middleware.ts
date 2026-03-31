@@ -1,32 +1,37 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import type { Connect, Plugin } from 'vite';
+import type {
+  AddSourceRequest,
+  CompiledFileMeta,
+  ContextType,
+  CorpusResponse,
+  CorpusTypeEntry,
+  ImportRequest,
+  ImportResponse,
+  SectionMeta,
+  SectionResponse,
+  SourceContentResponse,
+  SourceFile,
+  SourceListResponse,
+  UpdateCompiledRequest,
+} from '@contextual/shared';
+import { CONTEXT_TYPES, isContextType } from '@contextual/shared';
 
-type ContextType =
-  | 'research'
-  | 'taste'
-  | 'strategy'
-  | 'design-system'
-  | 'stakeholders';
-
-const CONTEXT_TYPES: ContextType[] = [
-  'research',
-  'taste',
-  'strategy',
-  'design-system',
-  'stakeholders',
-];
+const SOURCE_EXTENSIONS = new Set(['.md', '.txt', '.json']);
 
 interface RuntimeConfig {
   contextRoot: string;
-  projectPath: string;
-  previousProjectsPath: string;
 }
 
-function truncate(value: string, maxLength = 180): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength - 3)}...`;
+interface ServerErrorResponse {
+  error: string;
+}
+
+interface ParsedCompiledDocument {
+  meta: CompiledFileMeta;
+  body: string;
+  bodyLines: string[];
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -38,208 +43,503 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function isContextType(value: string): value is ContextType {
-  return CONTEXT_TYPES.includes(value as ContextType);
-}
-
-async function listFilesRecursively(directory: string): Promise<string[]> {
-  const entries = await fs.readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map(async (entry) => {
-      const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        return listFilesRecursively(fullPath);
-      }
-      return [fullPath];
-    })
-  );
-  return nested.flat();
+async function ensureDir(directory: string): Promise<void> {
+  await fs.mkdir(directory, { recursive: true });
 }
 
 function parseConfig(url: URL): RuntimeConfig {
-  const contextRoot = path.resolve(
-    url.searchParams.get('contextRoot') ||
-      process.env.CONTEXTUAL_CONTEXT_ROOT ||
-      path.join(process.cwd(), 'context-root')
-  );
-  const projectPath = path.resolve(
-    url.searchParams.get('projectPath') ||
-      process.env.CONTEXTUAL_PROJECT_PATH ||
-      path.join(process.cwd(), 'project')
-  );
-  const previousProjectsPath = path.resolve(
-    url.searchParams.get('previousProjectsPath') ||
-      process.env.CONTEXTUAL_PREVIOUS_PROJECTS_PATH ||
-      path.dirname(projectPath)
-  );
-
   return {
-    contextRoot,
-    projectPath,
-    previousProjectsPath,
+    contextRoot: path.resolve(
+      url.searchParams.get('contextRoot') ||
+        process.env.CONTEXTUAL_CONTEXT_ROOT ||
+        path.join(process.cwd(), 'context')
+    ),
   };
 }
 
-async function buildContextRootResponse(config: RuntimeConfig) {
-  const groups = await Promise.all(
-    CONTEXT_TYPES.map(async (type) => {
-      const directory = path.join(config.contextRoot, type);
-      if (!(await exists(directory))) {
-        return {
-          type,
-          fileCount: 0,
-          summary: 'No default files found.',
-          files: [],
-        };
+function parseScalar(raw: string): string | number {
+  const trimmed = raw.trim();
+  const unquoted = trimmed.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+  if (/^-?\d+$/.test(unquoted)) {
+    return Number(unquoted);
+  }
+  return unquoted;
+}
+
+function assignSectionField(section: Partial<SectionMeta>, line: string): void {
+  const match = /^([A-Za-z][\w]*):\s*(.+?)\s*$/.exec(line);
+  if (!match) {
+    return;
+  }
+
+  const [, key, rawValue] = match;
+  const parsedValue = parseScalar(rawValue);
+
+  switch (key) {
+    case 'title':
+      if (typeof parsedValue === 'string') {
+        section.title = parsedValue;
+      }
+      break;
+    case 'startLine':
+      if (typeof parsedValue === 'number') {
+        section.startLine = parsedValue;
+      }
+      break;
+    case 'endLine':
+      if (typeof parsedValue === 'number') {
+        section.endLine = parsedValue;
+      }
+      break;
+    case 'tokenEstimate':
+      if (typeof parsedValue === 'number') {
+        section.tokenEstimate = parsedValue;
+      }
+      break;
+  }
+}
+
+function splitFrontmatter(content: string): {
+  frontmatterLines: string[];
+  body: string;
+  bodyLines: string[];
+} | null {
+  const lines = content.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') {
+    return null;
+  }
+
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  if (closingIndex === -1) {
+    return null;
+  }
+
+  const bodyLines = lines.slice(closingIndex + 1);
+  return {
+    frontmatterLines: lines.slice(1, closingIndex),
+    body: bodyLines.join('\n'),
+    bodyLines,
+  };
+}
+
+export function estimateTokens(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  return Math.ceil(trimmed.split(/\s+/).length * 1.3);
+}
+
+export function parseFrontmatter(content: string): CompiledFileMeta | null {
+  const extracted = splitFrontmatter(content);
+  if (!extracted) {
+    return null;
+  }
+
+  let type: ContextType | null = null;
+  let title = '';
+  let lastCompiled = '';
+  let sourceCount = 0;
+  let totalTokenEstimate = 0;
+  const sections: SectionMeta[] = [];
+
+  for (let index = 0; index < extracted.frontmatterLines.length; index += 1) {
+    const line = extracted.frontmatterLines[index]!;
+
+    if (!line.trim()) {
+      continue;
+    }
+
+    if (/^sections:\s*$/.test(line)) {
+      index += 1;
+      while (index < extracted.frontmatterLines.length) {
+        const currentLine = extracted.frontmatterLines[index]!;
+
+        if (!currentLine.trim()) {
+          index += 1;
+          continue;
+        }
+
+        if (!currentLine.startsWith('  -')) {
+          index -= 1;
+          break;
+        }
+
+        const section: Partial<SectionMeta> = {};
+        const inlineFields = currentLine.replace(/^  -\s*/, '').trim();
+        if (inlineFields) {
+          assignSectionField(section, inlineFields);
+        }
+
+        index += 1;
+        while (
+          index < extracted.frontmatterLines.length &&
+          /^ {4}\S/.test(extracted.frontmatterLines[index]!)
+        ) {
+          assignSectionField(section, extracted.frontmatterLines[index]!.trim());
+          index += 1;
+        }
+        index -= 1;
+
+        if (
+          typeof section.title === 'string' &&
+          typeof section.startLine === 'number' &&
+          typeof section.endLine === 'number'
+        ) {
+          sections.push({
+            title: section.title,
+            startLine: section.startLine,
+            endLine: section.endLine,
+            tokenEstimate:
+              typeof section.tokenEstimate === 'number'
+                ? section.tokenEstimate
+                : estimateTokens(section.title),
+          });
+        }
       }
 
-      const filePaths = (await listFilesRecursively(directory)).filter((filePath) =>
-        ['.md', '.json', '.txt'].includes(path.extname(filePath).toLowerCase())
-      );
+      continue;
+    }
 
-      const files = await Promise.all(
-        filePaths.map(async (filePath) => {
-          const content = await fs.readFile(filePath, 'utf8');
-          const relativePath = path.relative(config.contextRoot, filePath);
-          return {
-            relativePath,
-            fileName: path.basename(filePath),
-            summary: truncate(content, 90),
-            preview: truncate(content, 260),
-          };
-        })
-      );
+    const match = /^([A-Za-z][\w]*):\s*(.+?)\s*$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    const [, key, rawValue] = match;
+    const parsedValue = parseScalar(rawValue);
+
+    switch (key) {
+      case 'type':
+        if (typeof parsedValue === 'string' && isContextType(parsedValue)) {
+          type = parsedValue;
+        }
+        break;
+      case 'title':
+        if (typeof parsedValue === 'string') {
+          title = parsedValue;
+        }
+        break;
+      case 'lastCompiled':
+        if (typeof parsedValue === 'string') {
+          lastCompiled = parsedValue;
+        }
+        break;
+      case 'sourceCount':
+        if (typeof parsedValue === 'number') {
+          sourceCount = parsedValue;
+        }
+        break;
+      case 'totalTokenEstimate':
+        if (typeof parsedValue === 'number') {
+          totalTokenEstimate = parsedValue;
+        }
+        break;
+    }
+  }
+
+  if (!type || !title || !lastCompiled) {
+    return null;
+  }
+
+  return {
+    type,
+    title,
+    lastCompiled,
+    sourceCount,
+    sections,
+    totalTokenEstimate:
+      totalTokenEstimate || sections.reduce((sum, section) => sum + section.tokenEstimate, 0),
+  };
+}
+
+function getTypePaths(contextRoot: string, type: ContextType) {
+  const typeDir = path.join(contextRoot, type);
+  return {
+    typeDir,
+    compiledPath: path.join(typeDir, 'compiled.md'),
+    sourcesDir: path.join(typeDir, '_sources'),
+  };
+}
+
+function previewText(content: string, maxLength = 400): string {
+  return content.slice(0, maxLength);
+}
+
+async function listSourceFilenames(sourcesDir: string): Promise<string[]> {
+  if (!(await exists(sourcesDir))) {
+    return [];
+  }
+
+  const entries = await fs.readdir(sourcesDir, { withFileTypes: true });
+  return entries
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+    )
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function sanitizeFilename(filename: string): string {
+  const decoded = decodeURIComponent(filename);
+  const basename = path.basename(decoded);
+  if (!basename || basename === '.' || basename === '..') {
+    throw new Error(`Invalid filename: "${filename}"`);
+  }
+  return basename;
+}
+
+async function readCompiledDocument(compiledPath: string): Promise<ParsedCompiledDocument | null> {
+  if (!(await exists(compiledPath))) {
+    return null;
+  }
+
+  const raw = await fs.readFile(compiledPath, 'utf8');
+  const extracted = splitFrontmatter(raw);
+  const meta = parseFrontmatter(raw);
+
+  if (!extracted || !meta) {
+    return null;
+  }
+
+  return {
+    meta,
+    body: extracted.body,
+    bodyLines: extracted.bodyLines,
+  };
+}
+
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.tmp-${Date.now()}`;
+  await fs.writeFile(tempPath, content, 'utf8');
+  await fs.rename(tempPath, filePath);
+}
+
+async function buildCorpusResponse(config: RuntimeConfig): Promise<CorpusResponse> {
+  const types: CorpusTypeEntry[] = await Promise.all(
+    CONTEXT_TYPES.map(async (type) => {
+      const { compiledPath, sourcesDir } = getTypePaths(config.contextRoot, type);
+      await ensureDir(sourcesDir);
+
+      const sourceCount = (await listSourceFilenames(sourcesDir)).length;
+      const compiled = await readCompiledDocument(compiledPath);
 
       return {
         type,
-        fileCount: files.length,
-        summary:
-          files.length === 0
-            ? 'Folder is available but currently empty.'
-            : `${files.length} file${files.length === 1 ? '' : 's'} ready to seed this project.`,
-        files,
+        exists: await exists(compiledPath),
+        meta: compiled?.meta ?? null,
+        sourceCount,
       };
     })
   );
 
   return {
     contextRoot: config.contextRoot,
-    projectPath: config.projectPath,
-    previousProjectsPath: config.previousProjectsPath,
-    groups,
+    types,
+    totalTokenEstimate: types.reduce(
+      (sum, entry) => sum + (entry.meta?.totalTokenEstimate ?? 0),
+      0
+    ),
   };
 }
 
-async function buildPreviousProjectsResponse(config: RuntimeConfig) {
-  if (!(await exists(config.previousProjectsPath))) {
-    return { projects: [] };
+async function getCompiledFileResponse(
+  config: RuntimeConfig,
+  type: ContextType
+): Promise<{ meta: CompiledFileMeta; content: string }> {
+  const { compiledPath } = getTypePaths(config.contextRoot, type);
+  if (!(await exists(compiledPath))) {
+    throw new Error(`No compiled file for type '${type}'`);
   }
 
-  const entries = await fs.readdir(config.previousProjectsPath, { withFileTypes: true });
-  const projects = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        const projectPath = path.join(config.previousProjectsPath, entry.name);
-        const groups = await Promise.all(
-          CONTEXT_TYPES.map(async (type) => {
-            const directory = path.join(projectPath, type);
-            if (!(await exists(directory))) {
-              return { type, fileCount: 0, files: [] };
-            }
-
-            const files = (await listFilesRecursively(directory))
-              .filter((filePath) => ['.md', '.json', '.txt'].includes(path.extname(filePath)))
-              .map((filePath) => path.relative(directory, filePath));
-
-            return { type, fileCount: files.length, files };
-          })
-        );
-
-        const totalFiles = groups.reduce((sum, group) => sum + group.fileCount, 0);
-        if (totalFiles === 0) return null;
-
-        return {
-          name: entry.name,
-          path: projectPath,
-          groups,
-        };
-      })
-  );
-
-  return { projects: projects.filter(Boolean) };
-}
-
-async function copyImportedFiles(
-  projectPath: string,
-  previousProjectsPath: string,
-  imported: { projectName: string; files: string[] } | undefined
-): Promise<string[]> {
-  if (!imported) return [];
-
-  const sourceProjectPath = path.join(previousProjectsPath, imported.projectName);
-  const copiedFiles: string[] = [];
-
-  for (const relativeFile of imported.files) {
-    const segments = relativeFile.split('/');
-    if (!segments[0] || !isContextType(segments[0])) {
-      continue;
-    }
-
-    const sourcePath = path.join(sourceProjectPath, relativeFile);
-    const destinationPath = path.join(projectPath, relativeFile);
-
-    if (!(await exists(sourcePath))) {
-      continue;
-    }
-
-    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-    await fs.copyFile(sourcePath, destinationPath);
-    copiedFiles.push(relativeFile);
-  }
-
-  return copiedFiles;
-}
-
-async function buildRepositoryResponse(config: RuntimeConfig) {
-  const files: Array<{
-    relativePath: string;
-    fileName: string;
-    type: ContextType;
-    size: number;
-    preview: string;
-  }> = [];
-
-  for (const type of CONTEXT_TYPES) {
-    const directory = path.join(config.contextRoot, type);
-    if (!(await exists(directory))) continue;
-
-    const filePaths = (await listFilesRecursively(directory)).filter((filePath) =>
-      ['.md', '.json', '.txt'].includes(path.extname(filePath).toLowerCase())
-    );
-
-    for (const filePath of filePaths) {
-      try {
-        const stat = await fs.stat(filePath);
-        const content = await fs.readFile(filePath, 'utf8');
-        files.push({
-          relativePath: path.relative(config.contextRoot, filePath),
-          fileName: path.basename(filePath),
-          type,
-          size: stat.size,
-          preview: truncate(content, 400),
-        });
-      } catch {
-        // Skip files we can't read
-      }
-    }
+  const document = await readCompiledDocument(compiledPath);
+  if (!document) {
+    throw new Error(`Compiled file for type '${type}' has invalid frontmatter`);
   }
 
   return {
-    contextRoot: config.contextRoot,
-    files,
-    totalFiles: files.length,
+    meta: document.meta,
+    content: document.body,
   };
+}
+
+async function getSectionResponse(
+  config: RuntimeConfig,
+  type: ContextType,
+  index: number
+): Promise<SectionResponse> {
+  const { compiledPath } = getTypePaths(config.contextRoot, type);
+  if (!(await exists(compiledPath))) {
+    throw new Error(`No compiled file for type '${type}'`);
+  }
+
+  const document = await readCompiledDocument(compiledPath);
+  if (!document) {
+    throw new Error(`Compiled file for type '${type}' has invalid frontmatter`);
+  }
+
+  const section = document.meta.sections[index];
+  if (!section) {
+    throw new Error(`No section ${index} for type '${type}'`);
+  }
+
+  const content = document.bodyLines
+    .slice(section.startLine - 1, section.endLine)
+    .join('\n');
+
+  return {
+    section,
+    content,
+  };
+}
+
+async function getSourceListResponse(
+  config: RuntimeConfig,
+  type: ContextType
+): Promise<SourceListResponse> {
+  const { sourcesDir } = getTypePaths(config.contextRoot, type);
+  await ensureDir(sourcesDir);
+
+  const filenames = await listSourceFilenames(sourcesDir);
+  const sources: SourceFile[] = await Promise.all(
+    filenames.map(async (filename) => {
+      const filePath = path.join(sourcesDir, filename);
+      const stat = await fs.stat(filePath);
+      const content = await fs.readFile(filePath, 'utf8');
+
+      return {
+        filename,
+        size: stat.size,
+        preview: previewText(content),
+        addedAt: stat.mtime.toISOString(),
+      };
+    })
+  );
+
+  return { type, sources };
+}
+
+async function getSourceContentResponse(
+  config: RuntimeConfig,
+  type: ContextType,
+  filename: string
+): Promise<SourceContentResponse> {
+  const safeFilename = sanitizeFilename(filename);
+  const { sourcesDir } = getTypePaths(config.contextRoot, type);
+  const filePath = path.join(sourcesDir, safeFilename);
+
+  if (!(await exists(filePath))) {
+    throw new Error(`Source file not found: '${safeFilename}'`);
+  }
+
+  return {
+    filename: safeFilename,
+    content: await fs.readFile(filePath, 'utf8'),
+  };
+}
+
+async function createSourceFile(
+  config: RuntimeConfig,
+  type: ContextType,
+  request: AddSourceRequest
+): Promise<{ filename: string; path: string }> {
+  if (typeof request.content !== 'string' || !request.content.trim()) {
+    throw new Error('Request body must include non-empty "content"');
+  }
+
+  const { typeDir, sourcesDir } = getTypePaths(config.contextRoot, type);
+  await ensureDir(typeDir);
+  await ensureDir(sourcesDir);
+
+  const filename = request.filename?.trim()
+    ? sanitizeFilename(request.filename)
+    : `paste-${Date.now()}.md`;
+  const filePath = path.join(sourcesDir, filename);
+  const body = request.label
+    ? `<!-- label: ${request.label} -->\n\n${request.content}`
+    : request.content;
+
+  await writeFileAtomic(filePath, body);
+
+  return {
+    filename,
+    path: filePath,
+  };
+}
+
+async function deleteSourceFile(
+  config: RuntimeConfig,
+  type: ContextType,
+  filename: string
+): Promise<void> {
+  const safeFilename = sanitizeFilename(filename);
+  const { sourcesDir } = getTypePaths(config.contextRoot, type);
+  const filePath = path.join(sourcesDir, safeFilename);
+
+  if (!(await exists(filePath))) {
+    throw new Error(`Source file not found: '${safeFilename}'`);
+  }
+
+  await fs.unlink(filePath);
+}
+
+async function updateCompiledFile(
+  config: RuntimeConfig,
+  type: ContextType,
+  request: UpdateCompiledRequest
+): Promise<void> {
+  if (typeof request.content !== 'string') {
+    throw new Error('Request body must include "content"');
+  }
+
+  const { typeDir, compiledPath } = getTypePaths(config.contextRoot, type);
+  await ensureDir(typeDir);
+  await writeFileAtomic(compiledPath, request.content);
+}
+
+async function importCorpus(
+  config: RuntimeConfig,
+  request: ImportRequest
+): Promise<ImportResponse> {
+  if (!request.sourcePath || !Array.isArray(request.types)) {
+    throw new Error('Request body must include "sourcePath" and "types"');
+  }
+
+  const sourceRoot = path.resolve(request.sourcePath);
+  const imported: ImportResponse['imported'] = [];
+
+  for (const type of request.types) {
+    if (!isContextType(type)) {
+      throw new Error(`Invalid context type in import: '${type}'`);
+    }
+
+    const sourcePaths = getTypePaths(sourceRoot, type);
+    const destinationPaths = getTypePaths(config.contextRoot, type);
+    const copiedFiles: string[] = [];
+
+    await ensureDir(destinationPaths.typeDir);
+    await ensureDir(destinationPaths.sourcesDir);
+
+    if (await exists(sourcePaths.compiledPath)) {
+      await fs.copyFile(sourcePaths.compiledPath, destinationPaths.compiledPath);
+      copiedFiles.push('compiled.md');
+    }
+
+    const sourceFiles = await listSourceFilenames(sourcePaths.sourcesDir);
+    for (const filename of sourceFiles) {
+      const fromPath = path.join(sourcePaths.sourcesDir, filename);
+      const toPath = path.join(destinationPaths.sourcesDir, filename);
+      await fs.copyFile(fromPath, toPath);
+      copiedFiles.push(`_sources/${filename}`);
+    }
+
+    imported.push({ type, files: copiedFiles });
+  }
+
+  return { imported };
 }
 
 async function readJson(req: Connect.IncomingMessage): Promise<unknown> {
@@ -257,6 +557,14 @@ function sendJson(res: Connect.ServerResponse, statusCode: number, payload: unkn
   res.end(JSON.stringify(payload));
 }
 
+function sendError(
+  res: Connect.ServerResponse,
+  statusCode: number,
+  message: string
+): void {
+  sendJson(res, statusCode, { error: message } satisfies ServerErrorResponse);
+}
+
 export function localFilesPlugin(): Plugin {
   return {
     name: 'context-manager-local-files',
@@ -269,56 +577,124 @@ export function localFilesPlugin(): Plugin {
 
         const url = new URL(req.url, 'http://localhost');
         const config = parseConfig(url);
+        const parts = url.pathname.split('/').filter(Boolean);
+
+        if (parts[0] !== 'api' || parts[1] !== 'corpus') {
+          next();
+          return;
+        }
 
         try {
-          if (req.method === 'GET' && url.pathname === '/api/context-root') {
-            const payload = await buildContextRootResponse(config);
-            sendJson(res, 200, payload);
+          if (req.method === 'GET' && parts.length === 2) {
+            sendJson(res, 200, await buildCorpusResponse(config));
             return;
           }
 
-          if (req.method === 'GET' && url.pathname === '/api/previous-projects') {
-            const payload = await buildPreviousProjectsResponse(config);
-            sendJson(res, 200, payload);
+          if (req.method === 'POST' && parts.length === 3 && parts[2] === 'import') {
+            const body = (await readJson(req)) as ImportRequest;
+            sendJson(res, 200, await importCorpus(config, body));
             return;
           }
 
-          if (req.method === 'GET' && url.pathname === '/api/repository') {
-            const payload = await buildRepositoryResponse(config);
-            sendJson(res, 200, payload);
+          const rawType = parts[2];
+          if (!rawType || !isContextType(rawType)) {
+            sendError(res, 400, `Invalid context type: '${rawType ?? ''}'`);
             return;
           }
 
-          if (req.method === 'POST' && url.pathname === '/api/handoff') {
-            const payload = (await readJson(req)) as {
-              timestamp: string;
-              defaultContext: { included: string[]; excluded: string[] };
-              pastedContent: unknown[];
-              importedFrom?: { projectName: string; importedTypes: string[]; files: string[] };
-            };
+          const type = rawType;
 
-            const contextualDir = path.join(config.projectPath, '.contextual');
-            await fs.mkdir(contextualDir, { recursive: true });
+          if (req.method === 'GET' && parts.length === 3) {
+            sendJson(res, 200, await getCompiledFileResponse(config, type));
+            return;
+          }
 
-            const copiedFiles = await copyImportedFiles(
-              config.projectPath,
-              config.previousProjectsPath,
-              payload.importedFrom
-            );
+          if (req.method === 'GET' && parts.length === 5 && parts[3] === 'sections') {
+            const sectionIndex = Number.parseInt(parts[4] ?? '', 10);
+            if (!Number.isInteger(sectionIndex) || sectionIndex < 0) {
+              sendError(res, 400, `Invalid section index: '${parts[4] ?? ''}'`);
+              return;
+            }
 
-            const handoffPath = path.join(contextualDir, 'handoff.json');
-            await fs.writeFile(handoffPath, JSON.stringify(payload, null, 2), 'utf8');
+            try {
+              sendJson(res, 200, await getSectionResponse(config, type, sectionIndex));
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : 'Failed to read section';
+              const statusCode = message.startsWith('No section') ? 404 : 500;
+              sendError(res, statusCode, message);
+            }
+            return;
+          }
 
-            sendJson(res, 200, {
-              handoffPath,
-              copiedFiles,
-            });
+          if (req.method === 'GET' && parts.length === 4 && parts[3] === 'sources') {
+            sendJson(res, 200, await getSourceListResponse(config, type));
+            return;
+          }
+
+          if (req.method === 'GET' && parts.length === 5 && parts[3] === 'sources') {
+            try {
+              sendJson(
+                res,
+                200,
+                await getSourceContentResponse(config, type, parts[4] ?? '')
+              );
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : 'Failed to read source file';
+              const statusCode = message.startsWith('Source file not found') ? 404 : 500;
+              sendError(res, statusCode, message);
+            }
+            return;
+          }
+
+          if (req.method === 'POST' && parts.length === 4 && parts[3] === 'sources') {
+            const body = (await readJson(req)) as AddSourceRequest;
+            try {
+              sendJson(res, 201, await createSourceFile(config, type, body));
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : 'Failed to write source file';
+              sendError(res, 400, message);
+            }
+            return;
+          }
+
+          if (req.method === 'DELETE' && parts.length === 5 && parts[3] === 'sources') {
+            try {
+              await deleteSourceFile(config, type, parts[4] ?? '');
+              sendJson(res, 200, { ok: true });
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : 'Failed to delete source file';
+              const statusCode = message.startsWith('Source file not found') ? 404 : 400;
+              sendError(res, statusCode, message);
+            }
+            return;
+          }
+
+          if (req.method === 'PUT' && parts.length === 4 && parts[3] === 'compiled') {
+            const body = (await readJson(req)) as UpdateCompiledRequest;
+            try {
+              await updateCompiledFile(config, type, body);
+              sendJson(res, 200, { ok: true });
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : 'Failed to update compiled file';
+              sendError(res, 400, message);
+            }
             return;
           }
         } catch (error) {
-          sendJson(res, 500, {
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
+          const message =
+            error instanceof Error ? error.message : 'Unknown server error';
+
+          if (message.startsWith('No compiled file')) {
+            sendError(res, 404, message);
+            return;
+          }
+
+          sendError(res, 500, message);
           return;
         }
 

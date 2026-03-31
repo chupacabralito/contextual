@@ -1,18 +1,24 @@
 import type { HandoffPayload, SubmitResponse } from '../types.js';
+import { addSource } from './sources.js';
 
 export async function submitHandoff(payload: HandoffPayload): Promise<SubmitResponse> {
-  const response = await fetch('/api/handoff', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  const copiedFiles: string[] = [];
 
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || 'Failed to submit handoff');
+  for (const entry of payload.pastedContent) {
+    if (!entry.content.trim()) {
+      continue;
+    }
+
+    const type = entry.suggestedType ?? 'research';
+    const result = await addSource(type, {
+      content: entry.content,
+      label: entry.label,
+    });
+    copiedFiles.push(result.path);
   }
 
-  return response.json() as Promise<SubmitResponse>;
+  return {
+    handoffPath: 'filesystem-corpus',
+    copiedFiles,
+  };
 }
