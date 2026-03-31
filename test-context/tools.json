@@ -1,0 +1,17 @@
+[
+  {
+    "name": "posthog",
+    "label": "PostHog analytics",
+    "enabled": true
+  },
+  {
+    "name": "figma",
+    "label": "Figma design files",
+    "enabled": true
+  },
+  {
+    "name": "hotjar",
+    "label": "Hotjar heatmaps",
+    "enabled": false
+  }
+]

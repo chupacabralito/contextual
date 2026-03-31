@@ -103,14 +103,23 @@ export function ContextualProvider({
         />
       )}
 
-      {/* Selected element highlight */}
+      {/* Selected element highlight (instruct mode annotation) */}
       {contextual.targetedElement &&
-        (contextual.state === 'annotating' || contextual.state === 'inspecting') && (
+        contextual.state === 'annotating' && (
           <ElementHighlight
             boundingBox={contextual.targetedElement.boundingBox}
             variant="selected"
           />
         )}
+
+      {/* Inspect stack highlights */}
+      {contextual.inspectStack.map((el, index) => (
+        <ElementHighlight
+          key={`inspect-${el.selector}-${index}`}
+          boundingBox={el.boundingBox}
+          variant="selected"
+        />
+      ))}
 
       {/* Annotation input (positioned near the targeted element) */}
       {contextual.state === 'annotating' &&
@@ -143,9 +152,10 @@ export function ContextualProvider({
         onClearQueue={contextual.clearQueue}
         onSubmitPass={contextual.submitPass}
         error={contextual.error}
-        targetedElement={contextual.targetedElement}
+        inspectStack={contextual.inspectStack}
+        onRemoveFromInspectStack={contextual.removeFromInspectStack}
+        onClearInspectStack={contextual.clearInspectStack}
         serverUrl={resolvedServerUrl}
-        onInspectClose={() => contextual.startTargeting()}
       />
     </>
   );

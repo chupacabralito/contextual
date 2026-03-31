@@ -1,0 +1,48 @@
+{
+  "id": "pass_1774885025366",
+  "timestamp": "2026-03-30T15:37:05.365Z",
+  "depth": "standard",
+  "instructions": [
+    {
+      "element": {
+        "selector": "div:nth-child(3)",
+        "label": "div",
+        "selectionMode": "click",
+        "boundingBox": {
+          "x": 1325,
+          "y": 298,
+          "width": 251,
+          "height": 29
+        },
+        "tagName": "div"
+      },
+      "rawText": ";alkjasdlf;lkasdfj",
+      "actions": [],
+      "preAttachedContext": []
+    },
+    {
+      "element": {
+        "selector": "button.btn-primary",
+        "label": "button \"Pay $49.00\"",
+        "selectionMode": "click",
+        "boundingBox": {
+          "x": 705,
+          "y": 602,
+          "width": 539,
+          "height": 41
+        },
+        "tagName": "button"
+      },
+      "rawText": "@stripe-simplicity[adfasdf]\nasdfasdf",
+      "actions": [
+        {
+          "source": "stripe-simplicity",
+          "instruction": "adfasdf",
+          "startIndex": 0,
+          "endIndex": 27
+        }
+      ],
+      "preAttachedContext": []
+    }
+  ]
+}

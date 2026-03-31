@@ -1,0 +1,68 @@
+{
+  "id": "pass_1711752000000",
+  "timestamp": "2026-03-29T20:00:00.000Z",
+  "depth": "standard",
+  "instructions": [
+    {
+      "element": {
+        "selector": "button.pay-btn",
+        "label": "Pay $49.00",
+        "selectionMode": "click",
+        "boundingBox": {
+          "x": 320,
+          "y": 480,
+          "width": 200,
+          "height": 40
+        },
+        "tagName": "button"
+      },
+      "rawText": "Make this button more dominant with a trust indicator @research[checkout friction] @posthog[CTA conversion rate]",
+      "actions": [
+        {
+          "source": "research",
+          "instruction": "checkout friction",
+          "startIndex": 55,
+          "endIndex": 85
+        },
+        {
+          "source": "posthog",
+          "instruction": "CTA conversion rate",
+          "startIndex": 86,
+          "endIndex": 118
+        }
+      ],
+      "preAttachedContext": [
+        {
+          "type": "research",
+          "query": "checkout friction",
+          "content": "Payment form abandonment rate: 34%",
+          "source": "research/checkout-friction.md"
+        }
+      ]
+    },
+    {
+      "element": {
+        "selector": "div.price-display",
+        "label": "$49.00/mo",
+        "selectionMode": "click",
+        "boundingBox": {
+          "x": 300,
+          "y": 350,
+          "width": 150,
+          "height": 30
+        },
+        "tagName": "div"
+      },
+      "rawText": "Show annual savings more prominently @research[pricing transparency]",
+      "actions": [
+        {
+          "source": "research",
+          "instruction": "pricing transparency",
+          "startIndex": 40,
+          "endIndex": 72
+        }
+      ],
+      "preAttachedContext": []
+    }
+  ]
+}

@@ -15,6 +15,8 @@ const README_CONTENT: Record<ContextType, string> = {
   strategy: 'Vision, success metrics, requirements, product goals',
   'design-system': 'Components, patterns, specifications, tokens',
   stakeholders: 'Feedback logs, priorities, decisions, meeting notes',
+  technical: 'Architecture considerations, technical constraints, API specs',
+  business: 'Business requirements, models, revenue considerations',
 };
 
 /**

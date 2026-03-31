@@ -72,6 +72,12 @@ interface UseContextualReturn {
   error: string | null;
   /** The formatted structured prompt (available after submit) */
   structuredPrompt: string | null;
+  /** Stack of elements being inspected */
+  inspectStack: TargetedElement[];
+  /** Remove an element from the inspect stack by index */
+  removeFromInspectStack: (index: number) => void;
+  /** Clear all elements from the inspect stack */
+  clearInspectStack: () => void;
 }
 
 let instructionCounter = 0;
@@ -95,6 +101,9 @@ export function useContextual({
   const [error, setError] = useState<string | null>(null);
   const [structuredPrompt, setStructuredPrompt] = useState<string | null>(null);
   const submitResetTimeoutRef = useRef<number | null>(null);
+
+  // Inspect stack: accumulates inspected elements during inspect session
+  const [inspectStack, setInspectStack] = useState<TargetedElement[]>([]);
   const {
     queue,
     addToQueue,
@@ -122,6 +131,7 @@ export function useContextual({
     setState('idle');
     setError(null);
     setStructuredPrompt(null);
+    setInspectStack([]);
     resetSurfaceState();
   }, [resetSurfaceState]);
 
@@ -131,6 +141,7 @@ export function useContextual({
       setModeState(nextMode);
       setError(null);
       setStructuredPrompt(null);
+      setInspectStack([]);
       resetSurfaceState();
       setState('targeting');
     },
@@ -139,12 +150,28 @@ export function useContextual({
 
   const setTargetedElement = useCallback(
     (el: TargetedElement) => {
-      setTargetedElementState(el);
       setError(null);
-      setState(mode === 'inspect' ? 'inspecting' : 'annotating');
+
+      if (mode === 'inspect') {
+        // Append to inspect stack and stay in targeting for the next click
+        setInspectStack((prev) => [...prev, el]);
+        setTargetedElementState(null);
+        setState('targeting');
+      } else {
+        setTargetedElementState(el);
+        setState('annotating');
+      }
     },
     [mode]
   );
+
+  const removeFromInspectStack = useCallback((index: number) => {
+    setInspectStack((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const clearInspectStack = useCallback(() => {
+    setInspectStack([]);
+  }, []);
 
   const editQueueItem = useCallback(
     (id: string) => {
@@ -309,5 +336,8 @@ export function useContextual({
     lastAnnotationText,
     error,
     structuredPrompt,
+    inspectStack,
+    removeFromInspectStack,
+    clearInspectStack,
   };
 }

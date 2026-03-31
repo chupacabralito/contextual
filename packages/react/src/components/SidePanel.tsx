@@ -47,12 +47,14 @@ interface SidePanelProps {
   onSubmitPass: () => void;
   /** Error message */
   error?: string | null;
-  /** Currently targeted element (for inspect mode) */
-  targetedElement: TargetedElement | null;
+  /** Stack of inspected elements */
+  inspectStack: TargetedElement[];
+  /** Remove an element from inspect stack by index */
+  onRemoveFromInspectStack: (index: number) => void;
+  /** Clear all inspected elements */
+  onClearInspectStack: () => void;
   /** Server URL for inspect API calls */
   serverUrl: string;
-  /** Return to targeting after closing inspect */
-  onInspectClose: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +73,10 @@ export function SidePanel({
   onClearQueue,
   onSubmitPass,
   error,
-  targetedElement,
+  inspectStack,
+  onRemoveFromInspectStack,
+  onClearInspectStack,
   serverUrl,
-  onInspectClose,
 }: SidePanelProps) {
   // -------------------------------------------------------------------------
   // Drag state
@@ -122,31 +125,15 @@ export function SidePanel({
   // -------------------------------------------------------------------------
   // Collapse state
   // -------------------------------------------------------------------------
-  const [manualCollapse, setManualCollapse] = useState<boolean | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const hasQueueContent = queue.length > 0;
-  const hasInspectContent = state === 'inspecting' && targetedElement !== null;
-  const hasContent = hasQueueContent || hasInspectContent;
+  const hasInspectContent = inspectStack.length > 0;
   const isActive = state !== 'idle';
 
-  // Auto-collapse logic: collapsed when no content, unless user manually expanded
-  // Expanded when content exists, unless user manually collapsed
-  const isCollapsed = manualCollapse !== null ? manualCollapse : !hasContent;
-
-  // Reset manual collapse when content state changes significantly
-  useEffect(() => {
-    if (hasContent) {
-      // Content appeared -- expand (unless user already manually collapsed)
-      if (manualCollapse === null) return; // Let auto-logic handle it
-    }
-  }, [hasContent, manualCollapse]);
-
   const toggleCollapse = useCallback(() => {
-    setManualCollapse((prev) => {
-      if (prev === null) return !(!hasContent); // Flip from auto state
-      return !prev;
-    });
-  }, [hasContent]);
+    setIsCollapsed((prev) => !prev);
+  }, []);
 
   // -------------------------------------------------------------------------
   // Submitted flash state
@@ -174,114 +161,135 @@ export function SidePanel({
       }}
     >
       {/* ----------------------------------------------------------------- */}
-      {/* Header: Mode toggle + Collapse + Esc                              */}
+      {/* Action bar: drag handle + top-level actions (Esc, expand/collapse) */}
       {/* ----------------------------------------------------------------- */}
       <div
         onMouseDown={handleMouseDown}
         style={{
           display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
-          gap: 6,
-          padding: '6px 8px',
-          backgroundColor: '#111827',
+          padding: '3px 8px',
+          backgroundColor: '#0d1321',
           border: '1px solid rgba(148, 163, 184, 0.18)',
-          borderRadius: isCollapsed ? 12 : '12px 12px 0 0',
-          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+          borderBottom: 'none',
+          borderRadius: '12px 12px 0 0',
           cursor: isDragging ? 'grabbing' : 'grab',
+          minHeight: 24,
         }}
       >
-        {/* Mode toggle buttons */}
-        <div style={{ display: 'flex', gap: 2 }}>
-          {(['instruct', 'inspect'] as const).map((candidateMode) => {
-            const isActiveMode = mode === candidateMode && isActive;
-            return (
-              <button
-                key={candidateMode}
-                onClick={() => onModeChange(candidateMode)}
-                style={{
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: isActiveMode ? '#f8fafc' : '#94a3b8',
-                  backgroundColor: isActiveMode
-                    ? 'rgba(59, 130, 246, 0.28)'
-                    : 'transparent',
-                  border: isActiveMode
-                    ? '1px solid rgba(96, 165, 250, 0.45)'
-                    : '1px solid transparent',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                {candidateMode === 'instruct' ? 'Instruct' : 'Inspect'}
-                {candidateMode === 'instruct' && hasQueueContent && !isActiveMode && (
-                  <span style={{
-                    marginLeft: 4,
-                    fontSize: 10,
-                    color: '#93c5fd',
-                    fontWeight: 700,
-                  }}>
-                    {queue.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Left: status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {isSubmitted && (
+            <span style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: '#4ade80',
+              letterSpacing: '0.02em',
+            }}>
+              Pass Copied
+            </span>
+          )}
+          {!isSubmitted && !isActive && (
+            <span style={{ fontSize: 10, color: '#475569' }}>
+              Contextual
+            </span>
+          )}
+          {isActive && !isSubmitted && (
+            <span style={{ fontSize: 10, color: '#64748b' }}>
+              {mode === 'instruct' ? 'Instruct' : 'Inspect'} mode
+            </span>
+          )}
         </div>
 
-        <div style={{ flex: 1 }} />
-
-        {/* Submitted flash */}
-        {isSubmitted && (
-          <span style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: '#4ade80',
-            letterSpacing: '0.02em',
-          }}>
-            Pass Copied
-          </span>
-        )}
-
-        {/* Collapse toggle */}
-        {hasContent && (
+        {/* Right: actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* Collapse/expand toggle (always visible) */}
           <button
             onClick={toggleCollapse}
-            style={{
-              padding: '4px 6px',
-              fontSize: 12,
-              color: '#94a3b8',
-              backgroundColor: 'transparent',
-              border: '1px solid transparent',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              lineHeight: 1,
-            }}
+            style={actionBarButtonStyle}
+            title={isCollapsed ? 'Expand' : 'Collapse'}
           >
             {isCollapsed ? '\u25BC' : '\u25B2'}
           </button>
-        )}
 
-        {/* Esc button (when active) */}
-        {isActive && !isSubmitted && (
-          <button
-            onClick={onCancel}
-            style={{
-              padding: '4px 8px',
-              fontSize: 11,
-              color: '#64748b',
-              backgroundColor: 'transparent',
-              border: '1px solid rgba(148, 163, 184, 0.15)',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            Esc
-          </button>
-        )}
+          {/* Esc (exit mode) */}
+          {isActive && !isSubmitted && (
+            <button
+              onClick={onCancel}
+              style={actionBarButtonStyle}
+              title="Exit mode (Esc)"
+            >
+              Esc
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ----------------------------------------------------------------- */}
+      {/* Mode toggle: full-width Instruct | Inspect                        */}
+      {/* ----------------------------------------------------------------- */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 2,
+          padding: '4px',
+          backgroundColor: '#111827',
+          borderLeft: '1px solid rgba(148, 163, 184, 0.18)',
+          borderRight: '1px solid rgba(148, 163, 184, 0.18)',
+          borderBottom: isCollapsed ? '1px solid rgba(148, 163, 184, 0.18)' : 'none',
+          borderRadius: isCollapsed ? '0 0 12px 12px' : 0,
+          boxShadow: isCollapsed ? '0 4px 16px rgba(0, 0, 0, 0.25)' : 'none',
+        }}
+      >
+        {(['instruct', 'inspect'] as const).map((candidateMode) => {
+          const isActiveMode = mode === candidateMode && isActive;
+          return (
+            <button
+              key={candidateMode}
+              onClick={() => onModeChange(candidateMode)}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                fontSize: 13,
+                fontWeight: 600,
+                color: isActiveMode ? '#f8fafc' : '#94a3b8',
+                backgroundColor: isActiveMode
+                  ? 'rgba(59, 130, 246, 0.28)'
+                  : 'transparent',
+                border: isActiveMode
+                  ? '1px solid rgba(96, 165, 250, 0.45)'
+                  : '1px solid transparent',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textAlign: 'center',
+              }}
+            >
+              {candidateMode === 'instruct' ? 'Instruct' : 'Inspect'}
+              {candidateMode === 'instruct' && hasQueueContent && !isActiveMode && (
+                <span style={{
+                  marginLeft: 4,
+                  fontSize: 10,
+                  color: '#93c5fd',
+                  fontWeight: 700,
+                }}>
+                  {queue.length}
+                </span>
+              )}
+              {candidateMode === 'inspect' && hasInspectContent && !isActiveMode && (
+                <span style={{
+                  marginLeft: 4,
+                  fontSize: 10,
+                  color: '#93c5fd',
+                  fontWeight: 700,
+                }}>
+                  {inspectStack.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* ----------------------------------------------------------------- */}
@@ -387,13 +395,70 @@ export function SidePanel({
             </>
           )}
 
-          {/* ---- Inspect mode: Decision Trail ---- */}
-          {mode === 'inspect' && hasInspectContent && targetedElement && (
-            <InspectContent
-              target={targetedElement}
-              serverUrl={serverUrl}
-              onClose={onInspectClose}
-            />
+          {/* ---- Inspect mode: Stacked context cards ---- */}
+          {mode === 'inspect' && hasInspectContent && (
+            <>
+              {/* Inspect header */}
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
+                  {inspectStack.length} element{inspectStack.length === 1 ? '' : 's'}
+                </span>
+                <button onClick={onClearInspectStack} style={secondaryButtonStyle}>
+                  Clear
+                </button>
+              </div>
+
+              {/* Stacked inspect cards */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'grid', gap: 8 }}>
+                {inspectStack.map((target, index) => (
+                  <div
+                    key={`${target.selector}-${index}`}
+                    style={{
+                      border: '1px solid rgba(148, 163, 184, 0.14)',
+                      borderRadius: 10,
+                      backgroundColor: '#0f172a',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {/* Card label + remove */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 10px',
+                        borderBottom: '1px solid rgba(148, 163, 184, 0.08)',
+                      }}
+                    >
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                        {index + 1}. {target.label}
+                      </span>
+                      <button
+                        onClick={() => onRemoveFromInspectStack(index)}
+                        style={dangerButtonStyle}
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    {/* Inspect content for this element */}
+                    <InspectContent
+                      target={target}
+                      serverUrl={serverUrl}
+                      onClose={() => onRemoveFromInspectStack(index)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           {/* ---- Empty body: no content to show ---- */}
@@ -538,4 +603,16 @@ const dangerButtonStyle: React.CSSProperties = {
   color: '#fca5a5',
   backgroundColor: 'rgba(127, 29, 29, 0.28)',
   border: '1px solid rgba(248, 113, 113, 0.18)',
+};
+
+const actionBarButtonStyle: React.CSSProperties = {
+  padding: '2px 6px',
+  fontSize: 10,
+  color: '#64748b',
+  backgroundColor: 'transparent',
+  border: '1px solid rgba(148, 163, 184, 0.12)',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  lineHeight: 1,
 };

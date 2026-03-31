@@ -1,261 +1,196 @@
-import { useMemo, useState } from 'react';
-import { submitHandoff } from './api/handoff.js';
-import { DefaultContextView } from './components/DefaultContextView.js';
-import { ImportView } from './components/ImportView.js';
-import { PasteZone } from './components/PasteZone.js';
-import { RepositoryView } from './components/RepositoryView.js';
-import { SummaryView } from './components/SummaryView.js';
-import { ToolConfigView } from './components/ToolConfigView.js';
-import { useContextRoot } from './hooks/useContextRoot.js';
-import { usePreviousProjects } from './hooks/usePreviousProjects.js';
-import { useRepository } from './hooks/useRepository.js';
-import { useTools } from './hooks/useTools.js';
-import type {
-  ContextType,
-  ImportSelection,
-  PastedEntry,
-  PreviousProjectSummary,
-  SubmitResponse,
-} from './types.js';
+// =============================================================================
+// Context Manager - Dashboard App
+// =============================================================================
+// Single-view corpus manager. Shows all 7 context types as cards. Selecting a
+// type shows its compiled content and raw sources. No wizard, no steps, no
+// handoff file -- the filesystem IS the context.
+// =============================================================================
 
-const STEPS = ['Defaults', 'Paste', 'Import', 'Submit', 'Tools', 'Repository'] as const;
+import { useCallback, useState } from 'react';
+import { useCorpus } from './hooks/useCorpus.js';
+import { useSources } from './hooks/useSources.js';
+import { useCompiledFile } from './hooks/useCompiledFile.js';
+import { CorpusCard } from './components/CorpusCard.js';
+import { SourceDrawer } from './components/SourceDrawer.js';
+import { CompiledView } from './components/CompiledView.js';
+import { AddSourceModal } from './components/AddSourceModal.js';
+import { ImportModal } from './components/ImportModal.js';
+import type { ContextType } from './hooks/useCorpus.js';
 
-function createEntry(): PastedEntry {
-  return {
-    id: crypto.randomUUID(),
-    label: '',
-    suggestedType: '',
-    content: '',
-  };
+function formatTokens(tokens: number): string {
+  if (tokens === 0) return '0';
+  if (tokens < 1000) return `${tokens}`;
+  return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 export function App() {
-  const contextRoot = useContextRoot();
-  const previousProjects = usePreviousProjects();
-  const toolsState = useTools();
-  const repository = useRepository();
-  const [currentStep, setCurrentStep] = useState(0);
-  const [expanded, setExpanded] = useState<ContextType | null>(null);
-  const [included, setIncluded] = useState<ContextType[]>([]);
-  const [pastedEntries, setPastedEntries] = useState<PastedEntry[]>([]);
-  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
-  const [submitResult, setSubmitResult] = useState<SubmitResponse | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const corpus = useCorpus();
+  const [selectedType, setSelectedType] = useState<ContextType | null>(null);
+  const [showAddSource, setShowAddSource] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [_viewingSource, setViewingSource] = useState<string | null>(null);
 
-  const data = contextRoot.data;
-  const groups = data?.groups ?? [];
+  const sources = useSources({ type: selectedType });
+  const compiled = useCompiledFile({ type: selectedType });
 
-  useMemo(() => {
-    if (data && included.length === 0) {
-      setIncluded(data.groups.map((group) => group.type));
-    }
-  }, [data, included.length]);
+  const handleSelectType = useCallback(
+    (type: ContextType) => {
+      setSelectedType((prev) => (prev === type ? null : type));
+      setViewingSource(null);
+    },
+    []
+  );
 
-  const excluded = groups
-    .map((group) => group.type)
-    .filter((type) => !included.includes(type));
+  const handleAddSource = useCallback(
+    async (content: string, label?: string) => {
+      await sources.addSource(content, label);
+      corpus.refetch();
+    },
+    [sources, corpus]
+  );
 
-  const toggleInclude = (type: ContextType) => {
-    setIncluded((current) =>
-      current.includes(type) ? current.filter((value) => value !== type) : [...current, type]
-    );
-  };
+  const handleDeleteSource = useCallback(
+    async (filename: string) => {
+      try {
+        await sources.deleteSource(filename);
+        corpus.refetch();
+      } catch {
+        // Error is already set in the hook
+      }
+    },
+    [sources, corpus]
+  );
 
-  const addEntry = () => {
-    setPastedEntries((current) => [...current, createEntry()]);
-  };
-
-  const updateEntry = (id: string, field: keyof PastedEntry, value: string) => {
-    setPastedEntries((current) =>
-      current.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
-    );
-  };
-
-  const removeEntry = (id: string) => {
-    setPastedEntries((current) => current.filter((entry) => entry.id !== id));
-  };
-
-  const selectProject = (project: PreviousProjectSummary) => {
-    setImportSelection({
-      projectName: project.name,
-      projectPath: project.path,
-      importedTypes: [],
-      files: [],
-    });
-  };
-
-  const toggleImportType = (type: ContextType) => {
-    setImportSelection((current) => {
-      if (!current) return current;
-      const project = previousProjects.data?.projects.find(
-        (item) => item.path === current.projectPath
-      );
-      if (!project) return current;
-
-      const nextTypes = current.importedTypes.includes(type)
-        ? current.importedTypes.filter((value) => value !== type)
-        : [...current.importedTypes, type];
-
-      const files = project.groups
-        .filter((group) => nextTypes.includes(group.type))
-        .flatMap((group) => group.files.map((file) => `${group.type}/${file}`));
-
-      return {
-        ...current,
-        importedTypes: nextTypes,
-        files,
-      };
-    });
-  };
-
-  const handleSubmit = async () => {
-    if (!data) return;
-
-    setIsSubmitting(true);
-    setSubmitError(null);
-    setSubmitResult(null);
-
-    try {
-      const result = await submitHandoff({
-        timestamp: new Date().toISOString(),
-        defaultContext: {
-          included,
-          excluded,
-        },
-        pastedContent: pastedEntries
-          .filter((entry) => entry.content.trim())
-          .map((entry) => ({
-            label: entry.label.trim() || 'Untitled',
-            suggestedType: entry.suggestedType || undefined,
-            content: entry.content,
-          })),
-        importedFrom: importSelection
-          ? {
-              projectName: importSelection.projectName,
-              importedTypes: importSelection.importedTypes,
-              files: importSelection.files,
-            }
-          : undefined,
+  const handleImport = useCallback(
+    async (sourcePath: string, types: ContextType[]) => {
+      const res = await fetch('/api/corpus/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourcePath, types }),
       });
+      if (!res.ok) throw new Error(`Import failed: ${res.status}`);
+      corpus.refetch();
+      sources.refetch();
+      compiled.refetch();
+    },
+    [corpus, sources, compiled]
+  );
 
-      setSubmitResult(result);
-      setCurrentStep(3);
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Failed to write handoff');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const handleUpdateCompiled = useCallback(
+    async (content: string) => {
+      await compiled.updateCompiled(content);
+      corpus.refetch();
+    },
+    [compiled, corpus]
+  );
 
-  if (contextRoot.isLoading || previousProjects.isLoading) {
-    return <main className="shell"><div className="loading">Loading context manager...</div></main>;
-  }
-
-  if (!data) {
+  // Loading state
+  if (corpus.isLoading) {
     return (
       <main className="shell">
-        <div className="error-panel">
-          <h1>Context manager could not load</h1>
-          <p>{contextRoot.error ?? previousProjects.error ?? 'Unknown error'}</p>
-        </div>
+        <div className="loading">Loading context manager...</div>
       </main>
     );
   }
 
+  const data = corpus.data;
+  const types = data?.types ?? [];
+  const typesWithContent = types.filter((t) => t.exists);
+  const totalTokens = data?.totalTokenEstimate ?? 0;
+
   return (
     <main className="shell">
-      <header className="hero">
+      {/* Header */}
+      <header className="dashboard-header">
         <div>
-          <p className="eyebrow">Workflow 1</p>
-          <h1>Context Manager</h1>
+          <p className="eyebrow">Context Manager</p>
+          <h1>Corpus</h1>
           <p className="hero-copy">
-            Review defaults, add raw source material, import reusable context, and write a handoff
-            file for the LLM session to structure into project context.
+            Your organizational context, organized by type. Add source material, review
+            compiled context, and manage what the agent reads.
           </p>
         </div>
-        <div className="hero-meta">
-          <div><span>Project</span><strong>{data.projectPath}</strong></div>
-          <div><span>Previous Projects</span><strong>{data.previousProjectsPath}</strong></div>
+        <div className="dashboard-stats">
+          <div className="stat-card">
+            <span className="stat-label">Context Types</span>
+            <strong>{typesWithContent.length} / {types.length}</strong>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Total Tokens</span>
+            <strong>{formatTokens(totalTokens)}</strong>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Context Root</span>
+            <strong className="stat-path">{data?.contextRoot ?? '—'}</strong>
+          </div>
         </div>
       </header>
 
-      <nav className="step-nav" aria-label="Context manager steps">
-        {STEPS.map((step, index) => (
-          <button
-            key={step}
-            className={`step-pill ${currentStep === index ? 'active' : ''}`}
-            onClick={() => setCurrentStep(index)}
-            type="button"
-          >
-            {step}
-          </button>
-        ))}
-      </nav>
-
-      <div className="stack-xl">
-        {currentStep === 0 && (
-          <DefaultContextView
-            data={data}
-            included={included}
-            expanded={expanded}
-            onToggleInclude={toggleInclude}
-            onToggleExpanded={(type) => setExpanded(expanded === type ? null : type)}
-          />
-        )}
-
-        {currentStep === 1 && (
-          <PasteZone
-            entries={pastedEntries}
-            onAdd={addEntry}
-            onChange={updateEntry}
-            onRemove={removeEntry}
-          />
-        )}
-
-        {currentStep === 2 && (
-          <ImportView
-            projects={previousProjects.data?.projects ?? []}
-            selection={importSelection}
-            onSelectProject={selectProject}
-            onToggleType={toggleImportType}
-          />
-        )}
-
-        {currentStep === 3 && (
-          <SummaryView
-            data={data}
-            included={included}
-            excluded={excluded}
-            pastedEntries={pastedEntries}
-            importSelection={importSelection}
-            isSubmitting={isSubmitting}
-            submitResult={submitResult}
-            error={submitError}
-            onSubmit={handleSubmit}
-          />
-        )}
-
-        {currentStep === 4 && (
-          <ToolConfigView
-            tools={toolsState.tools}
-            isLoading={toolsState.isLoading}
-            isSaving={toolsState.isSaving}
-            error={toolsState.error}
-            onToggle={toolsState.toggleTool}
-            onAdd={toolsState.addTool}
-            onRemove={toolsState.removeTool}
-          />
-        )}
-
-        {currentStep === 5 && (
-          <RepositoryView
-            data={repository.data}
-            isLoading={repository.isLoading}
-            error={repository.error}
-          />
-        )}
+      {/* Global actions */}
+      <div className="dashboard-actions">
+        <button type="button" className="secondary" onClick={() => setShowImport(true)}>
+          Import from Project
+        </button>
+        <button type="button" className="ghost" onClick={corpus.refetch}>
+          Refresh
+        </button>
+        {corpus.error && <span className="error" style={{ fontSize: '0.85rem' }}>{corpus.error}</span>}
       </div>
+
+      {/* Corpus grid */}
+      <div className="corpus-grid">
+        {types.map((entry) => (
+          <CorpusCard
+            key={entry.type}
+            entry={entry}
+            isSelected={selectedType === entry.type}
+            onSelect={() => handleSelectType(entry.type)}
+          />
+        ))}
+      </div>
+
+      {/* Detail view: compiled content + sources for selected type */}
+      {selectedType && (
+        <div className="detail-panel">
+          <div className="detail-main">
+            <CompiledView
+              type={selectedType}
+              meta={compiled.meta}
+              content={compiled.content}
+              isLoading={compiled.isLoading}
+              error={compiled.error}
+              onUpdate={handleUpdateCompiled}
+            />
+          </div>
+          <div className="detail-sidebar">
+            <SourceDrawer
+              type={selectedType}
+              sources={sources.sources}
+              isLoading={sources.isLoading}
+              error={sources.error}
+              onAddSource={() => setShowAddSource(true)}
+              onDeleteSource={handleDeleteSource}
+              onViewSource={setViewingSource}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Modals */}
+      {showAddSource && selectedType && (
+        <AddSourceModal
+          type={selectedType}
+          onSubmit={handleAddSource}
+          onClose={() => setShowAddSource(false)}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          onImport={handleImport}
+          onClose={() => setShowImport(false)}
+        />
+      )}
     </main>
   );
 }
