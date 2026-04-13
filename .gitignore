@@ -23,12 +23,10 @@ packages/context-manager/vite.config.d.ts.map
 .claude/
 workspace/
 CODEX-SPEC-2.md
-docs/PARALLEL-INTEGRATION-HANDOFF-02.md
-docs/STRATEGY-HANDOFF.md
-docs/PRODUCT-STRATEGY.md
-docs/GENERALISTA-CONNECTION.md
-docs/TODO.md
-docs/decisions/
+
+# Internal strategy and research docs (not shipped)
+/docs/
+/research/
 
 # Font source files (only .otf shipped in packages)
 /font/
