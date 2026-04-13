@@ -27,6 +27,9 @@ CODEX-SPEC-2.md
 # Internal strategy and research docs (not shipped)
 /docs/
 /research/
+/ideas/
+CODEX-*.md
+CLAUDE-*.md
 
 # Font source files (only .otf shipped in packages)
 /font/

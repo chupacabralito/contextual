@@ -104,4 +104,4 @@ npm run test:server
 
 ## Strategy
 
-See [docs/PRODUCT-STRATEGY.md](docs/PRODUCT-STRATEGY.md) for the current product thesis.
+Contextual is a local-first context management layer for repo-native AI agents. It gives designers and product teams a way to maintain structured context alongside their codebase, so agent-driven workflows can reference real research, strategy, and design decisions.
