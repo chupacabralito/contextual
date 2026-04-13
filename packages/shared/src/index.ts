@@ -73,7 +73,23 @@ export interface CompiledFileMeta {
   sections: SectionMeta[];
   /** Total approximate token count across all sections */
   totalTokenEstimate: number;
+  /** Priority tier for agent loading (defaults based on type if omitted) */
+  priority?: ContextPriority;
 }
+
+/** Priority tier for agent context loading */
+export type ContextPriority = 'system' | 'project' | 'reference';
+
+/** Default priority for each context type */
+export const DEFAULT_PRIORITIES: Record<ContextType, ContextPriority> = {
+  'design-system': 'system',
+  technical: 'system',
+  research: 'project',
+  strategy: 'project',
+  stakeholders: 'project',
+  taste: 'reference',
+  business: 'reference',
+};
 
 /** Summary of one context type in the corpus */
 export interface CorpusTypeEntry {
@@ -85,12 +101,16 @@ export interface CorpusTypeEntry {
   meta: CompiledFileMeta | null;
   /** Number of files in _sources/ */
   sourceCount: number;
+  /** Effective priority (from frontmatter or DEFAULT_PRIORITIES fallback) */
+  priority: ContextPriority;
 }
 
 /** Response for GET /api/corpus */
 export interface CorpusResponse {
   /** Path to the context root directory */
   contextRoot: string;
+  /** Project name from server config (--project flag) */
+  project?: string;
   /** Status for each of the 7 context types */
   types: CorpusTypeEntry[];
   /** Sum of all token estimates across all types */
@@ -180,6 +200,74 @@ export interface ImportResponse {
     type: ContextType;
     files: string[];
   }>;
+}
+
+// -----------------------------------------------------------------------------
+// Project Types
+// -----------------------------------------------------------------------------
+
+/** A project brief stored in _projects/{name}/brief.md */
+export interface ProjectBrief {
+  /** Project name (directory name) */
+  name: string;
+  /** Human-readable title from frontmatter */
+  title: string;
+  /** Brief description/goal (may be empty if not provided at creation) */
+  description?: string;
+  /** ISO timestamp of creation */
+  createdAt: string;
+  /** ISO timestamp of last activity */
+  lastActivityAt: string;
+  /** Context types this project primarily uses */
+  activeTypes: ContextType[];
+  /** Full markdown body content from brief.md (after frontmatter) */
+  body?: string;
+}
+
+/** Summary for project list views */
+export interface ProjectSummary {
+  name: string;
+  title: string;
+  lastActivityAt: string;
+  passCount: number;
+  outcomeCount?: number;
+}
+
+/** Response for GET /api/projects */
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+}
+
+/** Response for GET /api/projects/:name */
+export interface ProjectDetailResponse {
+  brief: ProjectBrief;
+  passCount: number;
+  outcomeCount?: number;
+  passes: Array<{
+    id: string;
+    timestamp: string;
+    instructionCount: number;
+  }>;
+  outcomes?: Array<{
+    id: string;
+    passId: string;
+    timestamp: string;
+    status: OutcomeStatus;
+  }>;
+}
+
+/** Request for POST /api/projects */
+export interface CreateProjectRequest {
+  name: string;
+  title: string;
+  description?: string;
+  activeTypes?: ContextType[];
+}
+
+/** Response for POST /api/projects */
+export interface CreateProjectResponse {
+  project: ProjectBrief;
+  path: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -309,7 +397,7 @@ export interface ParsedMention {
 /**
  * A parsed @source[instruction] directive from annotation text.
  * Unlike ParsedMention, source is a string -- accepts any @source, not just
- * the 5 local ContextType values. This is the protocol/UX separation:
+ * the 7 local ContextType values. This is the protocol/UX separation:
  * the parser accepts anything, autocomplete suggests configured tools.
  */
 export interface ParsedAction {
@@ -352,6 +440,8 @@ export interface TargetedElement {
   selectedText?: string;
   /** The element's tag name */
   tagName: string;
+  /** CSS selectors for ancestor elements (parent -> root), used for inherited pass matching */
+  ancestorSelectors?: string[];
 }
 
 // -----------------------------------------------------------------------------
@@ -402,6 +492,8 @@ export interface PreAttachedSnippet {
  * what gets written to /passes JSON files.
  */
 export interface Instruction {
+  /** Stable instruction ID for review, inspect, and future writeback attribution */
+  id: string;
   /** The targeted UI element */
   element: TargetedElement;
   /** The raw annotation text as typed by the designer (including @mentions) */
@@ -438,8 +530,14 @@ export interface Pass {
   id: string;
   /** ISO 8601 timestamp */
   timestamp: string;
+  /** Optional project identifier for project-scoped workflows */
+  project?: string;
   /** Resolution depth (optional, defaults to 'standard') */
   depth?: ResolutionDepth;
+  /** Explicit context types this pass is intended to affect */
+  affectedContextTypes?: ContextType[];
+  /** Relative corpus paths loaded or considered when the pass was created */
+  loadedContextPaths?: string[];
   /** All instructions in the pass */
   instructions: Instruction[];
 }
@@ -519,6 +617,24 @@ export interface HealthResponse {
   availableTypes: ContextType[];
 }
 
+/** Paired Terminal session metadata for one context root */
+export interface TerminalPairing {
+  terminalApp: 'Terminal.app';
+  tty: string;
+  termProgram: string;
+  pairedAt: string;
+  updatedAt: string;
+  workingDirectory?: string;
+}
+
+/** Response for GET /api/pairing */
+export interface PairingStatusResponse {
+  paired: boolean;
+  path: string;
+  suggestedCommand: string;
+  pairing: TerminalPairing | null;
+}
+
 // -----------------------------------------------------------------------------
 // API: GET /suggest
 // -----------------------------------------------------------------------------
@@ -587,6 +703,107 @@ export interface CreatePassResponse {
 }
 
 // -----------------------------------------------------------------------------
+// API: POST /outcomes
+// -----------------------------------------------------------------------------
+
+export type OutcomeStatus =
+  | 'pending'
+  | 'approved'
+  | 'approved-with-feedback'
+  | 'rejected';
+
+export type InstructionReviewStatus =
+  | 'pending'
+  | 'looks-good'
+  | 'needs-another-pass';
+
+export type WritebackKind = 'learned' | 'brief' | 'compiled' | 'source';
+
+export interface OutcomeWriteback {
+  /** Relative path to the artifact written back into the corpus */
+  path: string;
+  /** What kind of artifact was updated */
+  kind: WritebackKind;
+  /** Human-readable summary of the writeback */
+  summary: string;
+  /** One or more pass IDs that informed this writeback */
+  sourcePassIds: string[];
+}
+
+export interface InstructionLearningDraft {
+  /** Short title for the reusable learning */
+  title: string;
+  /** Distilled lesson text */
+  summary: string;
+  /** Intended learned/ destination */
+  destination: LearnedFolderName;
+}
+
+export interface InstructionReview {
+  /** Instruction being reviewed */
+  instructionId: string;
+  /** Human-readable element label for quick scanning */
+  elementLabel: string;
+  /** Original instruction text for quick recall */
+  rawText: string;
+  /** Operator evaluation of this instruction result */
+  status: InstructionReviewStatus;
+  /** Optional follow-up note or rationale */
+  feedback?: string;
+  /** Optional draft learning attached to this instruction */
+  learningDraft?: InstructionLearningDraft;
+  /** ISO timestamp for the last review update */
+  reviewedAt?: string;
+}
+
+export interface PassOutcome {
+  /** Unique ID for the outcome record */
+  id: string;
+  /** Pass this outcome belongs to */
+  passId: string;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+  /** Review/execution state of the outcome */
+  status: OutcomeStatus;
+  /** Optional project identifier for project-scoped workflows */
+  project?: string;
+  /** Explicit context types touched by the completed work */
+  affectedContextTypes?: ContextType[];
+  /** Relative corpus paths that were loaded during execution or review */
+  loadedContextPaths?: string[];
+  /** High-level summary of what changed */
+  summary?: string;
+  /** Human approval feedback or rejection rationale */
+  feedback?: string;
+  /** Per-instruction review state for the latest pass */
+  instructionReviews?: InstructionReview[];
+  /** Files changed by the agent while executing the pass */
+  changedFiles: string[];
+  /** Optional git commit SHA associated with the work */
+  commitSha?: string;
+  /** Optional pull request URL associated with the work */
+  prUrl?: string;
+  /** Corpus artifacts created or updated from this pass */
+  writebacks: OutcomeWriteback[];
+}
+
+/** Request body for POST /outcomes (persist a pass outcome) */
+export interface CreateOutcomeRequest {
+  /** The outcome to persist */
+  outcome: PassOutcome;
+}
+
+/** Response after persisting an outcome */
+export interface CreateOutcomeResponse {
+  /** Outcome ID */
+  id: string;
+  /** File path where the outcome was written */
+  path: string;
+  /** ISO timestamp */
+  timestamp: string;
+}
+
+// -----------------------------------------------------------------------------
 // API: GET /passes
 // -----------------------------------------------------------------------------
 
@@ -596,8 +813,14 @@ export interface PassSummary {
   id: string;
   /** ISO timestamp */
   timestamp: string;
+  /** Optional project identifier for project-scoped workflows */
+  project?: string;
   /** Resolution depth (optional) */
   depth?: ResolutionDepth;
+  /** Explicit context types this pass is intended to affect */
+  affectedContextTypes?: ContextType[];
+  /** Relative corpus paths loaded or considered when the pass was created */
+  loadedContextPaths?: string[];
   /** Number of instructions in the pass */
   instructionCount: number;
   /** Element labels targeted in this pass */
@@ -608,6 +831,34 @@ export interface PassSummary {
 export interface PassListResponse {
   /** All passes, most recent first */
   passes: PassSummary[];
+}
+
+// -----------------------------------------------------------------------------
+// API: GET /outcomes
+// -----------------------------------------------------------------------------
+
+export interface OutcomeSummary {
+  /** Outcome ID */
+  id: string;
+  /** Related pass ID */
+  passId: string;
+  /** ISO timestamp */
+  timestamp: string;
+  /** Outcome state */
+  status: OutcomeStatus;
+  /** Optional project identifier for project-scoped workflows */
+  project?: string;
+  /** Explicit context types touched by the completed work */
+  affectedContextTypes?: ContextType[];
+  /** Number of code/content files changed */
+  changedFileCount: number;
+  /** Number of writeback artifacts produced */
+  writebackCount: number;
+}
+
+export interface OutcomeListResponse {
+  /** All outcomes, most recent first */
+  outcomes: OutcomeSummary[];
 }
 
 // -----------------------------------------------------------------------------
@@ -622,14 +873,18 @@ export interface InspectPassReference {
   timestamp: string;
   /** The instruction that targeted this element */
   instruction: Instruction;
+  /** If set, this pass was inherited from an ancestor element (the selector it matched) */
+  inheritedFrom?: string;
 }
 
 /** Response for GET /inspect?selector=... (decision trail for an element) */
 export interface InspectResponse {
   /** The CSS selector that was queried */
   selector: string;
-  /** Passes that targeted this element, most recent first */
+  /** Passes that directly targeted this element, most recent first */
   passes: InspectPassReference[];
+  /** Passes inherited from ancestor elements (parent, root, etc.), most recent first */
+  inheritedPasses: InspectPassReference[];
   /** Pre-attached context that was included when this element was targeted */
   contextHistory: PreAttachedSnippet[];
 }
@@ -692,15 +947,68 @@ export interface ServerConfig {
 
 export const DEFAULT_SERVER_PORT = 4700;
 
-export const DEFAULT_CONTEXT_FOLDERS: ContextType[] = [
-  'research',
-  'taste',
-  'strategy',
-  'design-system',
-  'stakeholders',
-  'technical',
-  'business',
-];
+export const DEFAULT_CONTEXT_FOLDERS: ContextType[] = CONTEXT_TYPES;
+
+export const DEFAULT_LEARNED_FOLDERS = [
+  'operator-preferences',
+  'ui-patterns',
+  'tool-routing',
+  'project-decisions',
+] as const;
+
+export type LearnedFolderName = typeof DEFAULT_LEARNED_FOLDERS[number];
+
+// -----------------------------------------------------------------------------
+// Context Discovery (scan project for existing .md files)
+// -----------------------------------------------------------------------------
+
+/** A markdown file found in the project directory */
+export interface DiscoveredFile {
+  /** Relative path from the project root */
+  relativePath: string;
+  /** Filename */
+  filename: string;
+  /** First 500 characters of the file content */
+  preview: string;
+  /** File size in bytes */
+  size: number;
+  /** Suggested context type based on path/content heuristics */
+  suggestedType: ContextType | null;
+}
+
+/** Response for GET /api/discover */
+export interface DiscoverResponse {
+  /** The project directory that was scanned */
+  projectDir: string;
+  /** Markdown files found */
+  files: DiscoveredFile[];
+}
+
+/** A single file to import with its assigned category */
+export interface DiscoverImportFile {
+  /** Relative path from the project root */
+  relativePath: string;
+  /** The context type to import into */
+  type: ContextType;
+}
+
+/** Request body for POST /api/discover/import */
+export interface DiscoverImportRequest {
+  /** Files to import with their assigned categories */
+  files: DiscoverImportFile[];
+}
+
+/** Response for POST /api/discover/import */
+export interface DiscoverImportResponse {
+  /** Number of files imported */
+  imported: number;
+  /** Details of each import */
+  results: Array<{
+    relativePath: string;
+    type: ContextType;
+    filename: string;
+  }>;
+}
 
 // -----------------------------------------------------------------------------
 // Utility: Type guard for ContextType

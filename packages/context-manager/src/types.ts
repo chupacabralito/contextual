@@ -7,10 +7,19 @@
 
 export type {
   ContextType,
+  ContextPriority,
   CompiledFileMeta,
   CompiledFileResponse,
   CorpusResponse,
   CorpusTypeEntry,
+  CreateOutcomeRequest,
+  CreateOutcomeResponse,
+  ProjectBrief,
+  ProjectSummary,
+  ProjectListResponse,
+  ProjectDetailResponse,
+  CreateProjectRequest,
+  CreateProjectResponse,
   SectionMeta,
   SectionResponse,
   SourceFile,
@@ -30,9 +39,20 @@ export type {
   ImportSelection,
   HandoffPayload,
   SubmitResponse,
+  PairingStatusResponse,
+  TerminalPairing,
   ConfiguredTool,
+  OutcomeListResponse,
+  OutcomeStatus,
+  OutcomeSummary,
+  OutcomeWriteback,
+  PassOutcome,
   RepositoryFile,
   RepositoryResponse,
 } from '@contextual/shared';
 
-export { CONTEXT_TYPES } from '@contextual/shared';
+export {
+  CONTEXT_TYPES,
+  DEFAULT_LEARNED_FOLDERS,
+  DEFAULT_PRIORITIES,
+} from '@contextual/shared';

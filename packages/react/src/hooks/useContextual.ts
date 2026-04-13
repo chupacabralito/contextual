@@ -2,23 +2,31 @@
 // Main Contextual Hook
 // =============================================================================
 // Orchestrates the annotation workflow: targeting -> queueing instructions ->
-// submitting refinement passes, plus Inspect mode for element history.
+// submitting refinement passes, plus Inspect mode for element history and a
+// transient post-pass Review drawer.
 //
 // Refined: No depth selector, no pre-resolution. Passes store raw instructions
 // with @tool[query] action references. Context is read by the agent at
 // execution time, not baked in at annotation time.
 // =============================================================================
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AnnotationMode,
+  ContextType,
+  CreateOutcomeRequest,
+  CreatePassResponse,
   CreatePassRequest,
   Instruction,
+  InstructionLearningDraft,
+  InstructionReview,
   Pass,
+  PassOutcome,
   QueuedInstruction,
   TargetedElement,
 } from '@contextual/shared';
-import { parseActions } from '../mentions/parser.js';
+import { DEFAULT_LEARNED_FOLDERS, isContextType } from '@contextual/shared';
+import { parseActions, stripMentions } from '../mentions/parser.js';
 import { formatPass } from '../output/formatter.js';
 import { useAnnotationQueue } from './useAnnotationQueue.js';
 
@@ -28,11 +36,30 @@ export type ContextualState =
   | 'targeting'
   | 'annotating'
   | 'inspecting'
-  | 'submitted';
+  | 'reviewing';
+
+export interface ReviewDrawerState {
+  /** The latest submitted pass being reviewed */
+  pass: Pass;
+  /** Persisted outcome record backing this review */
+  outcome: PassOutcome;
+  /** Whether the review drawer is currently visible */
+  isOpen: boolean;
+  /** Which instruction currently has the learning form open */
+  activeLearningInstructionId: string | null;
+  /** Unsaved local drafts keyed by instruction ID */
+  learningDrafts: Record<string, InstructionLearningDraft>;
+}
 
 interface UseContextualOptions {
   /** Base URL for the local context server */
   serverUrl?: string;
+  /** Optional project identifier to stamp onto passes and outcomes */
+  project?: string;
+  /** Optional context types known to be loaded for the current session/page */
+  affectedContextTypes?: ContextType[];
+  /** Optional relative corpus paths loaded for the current session/page */
+  loadedContextPaths?: string[];
 }
 
 interface UseContextualReturn {
@@ -66,6 +93,25 @@ interface UseContextualReturn {
   editQueueItem: (id: string) => void;
   /** Submit the queued pass (formats output for agent) */
   submitPass: () => Promise<void>;
+  /** The latest review drawer state, if any */
+  review: ReviewDrawerState | null;
+  /** Close the current review drawer */
+  closeReview: () => void;
+  /** Mark an instruction result as good */
+  markInstructionLooksGood: (instructionId: string) => void;
+  /** Reopen an instruction as a follow-up pass */
+  requestInstructionFollowUp: (instructionId: string) => void;
+  /** Open the learning form for a specific instruction */
+  openLearningDraft: (instructionId: string) => void;
+  /** Close the learning form for a specific instruction */
+  cancelLearningDraft: () => void;
+  /** Update a draft learning field */
+  updateLearningDraft: (
+    instructionId: string,
+    patch: Partial<InstructionLearningDraft>
+  ) => void;
+  /** Persist a draft learning onto the reviewed instruction */
+  saveLearningDraft: (instructionId: string) => Promise<void>;
   /** The last annotation text (preserved for back-to-edit) */
   lastAnnotationText: string;
   /** Error message if something went wrong */
@@ -81,10 +127,154 @@ interface UseContextualReturn {
 }
 
 let instructionCounter = 0;
+let outcomeCounter = 0;
 
 function buildInstructionId(): string {
   instructionCounter += 1;
   return `instruction_${instructionCounter}_${Date.now()}`;
+}
+
+function buildOutcomeId(): string {
+  outcomeCounter += 1;
+  return `outcome_${outcomeCounter}_${Date.now()}`;
+}
+
+function deriveAffectedContextTypes(
+  queue: QueuedInstruction[],
+  configuredTypes: ContextType[],
+): ContextType[] {
+  const types = new Set<ContextType>(configuredTypes);
+
+  for (const instruction of queue) {
+    for (const action of instruction.actions) {
+      if (isContextType(action.source)) {
+        types.add(action.source);
+      }
+    }
+  }
+
+  return Array.from(types);
+}
+
+function buildInstructionReviews(instructions: Instruction[]): InstructionReview[] {
+  return instructions.map((instruction) => ({
+    instructionId: instruction.id,
+    elementLabel: instruction.element.label,
+    rawText: instruction.rawText,
+    status: 'pending',
+  }));
+}
+
+function buildOutcomeFeedback(instructionReviews: InstructionReview[]): string | undefined {
+  const notes = instructionReviews
+    .filter((review) => review.feedback?.trim())
+    .map((review) => `${review.elementLabel}: ${review.feedback!.trim()}`);
+
+  return notes.length > 0 ? notes.join('\n') : undefined;
+}
+
+function buildOutcomeSummary(instructionReviews: InstructionReview[]): string {
+  if (instructionReviews.length === 0) {
+    return 'Awaiting review.';
+  }
+
+  const pendingCount = instructionReviews.filter((review) => review.status === 'pending').length;
+  const looksGoodCount = instructionReviews.filter((review) => review.status === 'looks-good').length;
+  const followUpCount = instructionReviews.filter(
+    (review) => review.status === 'needs-another-pass',
+  ).length;
+  const learningCount = instructionReviews.filter((review) => review.learningDraft).length;
+
+  const parts: string[] = [];
+  if (looksGoodCount > 0) {
+    parts.push(`${looksGoodCount} look${looksGoodCount === 1 ? 's' : ''} good`);
+  }
+  if (followUpCount > 0) {
+    parts.push(`${followUpCount} need${followUpCount === 1 ? 's' : ''} another pass`);
+  }
+  if (learningCount > 0) {
+    parts.push(`${learningCount} saved as learning`);
+  }
+  if (pendingCount > 0) {
+    parts.push(`${pendingCount} pending review`);
+  }
+
+  return parts.length > 0 ? parts.join(', ') : 'Awaiting review.';
+}
+
+function buildOutcomeStatus(instructionReviews: InstructionReview[]): PassOutcome['status'] {
+  if (instructionReviews.length === 0) {
+    return 'pending';
+  }
+
+  const pendingCount = instructionReviews.filter((review) => review.status === 'pending').length;
+  if (pendingCount === instructionReviews.length) {
+    return 'pending';
+  }
+
+  const followUpCount = instructionReviews.filter(
+    (review) => review.status === 'needs-another-pass',
+  ).length;
+  const learningCount = instructionReviews.filter((review) => review.learningDraft).length;
+
+  if (followUpCount === instructionReviews.length) {
+    return 'rejected';
+  }
+
+  if (followUpCount > 0 || learningCount > 0) {
+    return 'approved-with-feedback';
+  }
+
+  return 'approved';
+}
+
+function buildDefaultLearningDraft(instruction: Instruction): InstructionLearningDraft {
+  const summary = stripMentions(instruction.rawText) || instruction.rawText.trim();
+  return {
+    title: instruction.element.label,
+    summary,
+    destination: 'ui-patterns',
+  };
+}
+
+function buildInitialOutcome(
+  pass: Pass,
+  timestamp: string,
+): PassOutcome {
+  const instructionReviews = buildInstructionReviews(pass.instructions);
+
+  return {
+    id: buildOutcomeId(),
+    passId: pass.id,
+    timestamp,
+    status: 'pending',
+    project: pass.project,
+    affectedContextTypes: pass.affectedContextTypes,
+    loadedContextPaths: pass.loadedContextPaths,
+    summary: buildOutcomeSummary(instructionReviews),
+    feedback: buildOutcomeFeedback(instructionReviews),
+    instructionReviews,
+    changedFiles: [],
+    writebacks: [],
+  };
+}
+
+function withDerivedOutcomeFields(outcome: PassOutcome): PassOutcome {
+  const instructionReviews = Array.isArray(outcome.instructionReviews)
+    ? outcome.instructionReviews
+    : [];
+
+  return {
+    ...outcome,
+    instructionReviews,
+    status: buildOutcomeStatus(instructionReviews),
+    summary: buildOutcomeSummary(instructionReviews),
+    feedback: buildOutcomeFeedback(instructionReviews),
+  };
+}
+
+function serializeOutcome(outcome: PassOutcome): string {
+  return JSON.stringify(withDerivedOutcomeFields(outcome));
 }
 
 /**
@@ -92,6 +282,9 @@ function buildInstructionId(): string {
  */
 export function useContextual({
   serverUrl = `http://localhost:4700`,
+  project,
+  affectedContextTypes = [],
+  loadedContextPaths = [],
 }: UseContextualOptions = {}): UseContextualReturn {
   const [state, setState] = useState<ContextualState>('idle');
   const [mode, setModeState] = useState<AnnotationMode>('instruct');
@@ -100,9 +293,9 @@ export function useContextual({
   const [editingInstructionId, setEditingInstructionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [structuredPrompt, setStructuredPrompt] = useState<string | null>(null);
-  const submitResetTimeoutRef = useRef<number | null>(null);
+  const [review, setReview] = useState<ReviewDrawerState | null>(null);
+  const reviewSignatureRef = useRef<string | null>(null);
 
-  // Inspect stack: accumulates inspected elements during inspect session
   const [inspectStack, setInspectStack] = useState<TargetedElement[]>([]);
   const {
     queue,
@@ -120,6 +313,120 @@ export function useContextual({
     setEditingInstructionId(null);
   }, []);
 
+  const persistOutcome = useCallback(
+    async (outcome: PassOutcome) => {
+      const payload: CreateOutcomeRequest = {
+        outcome: withDerivedOutcomeFields(outcome),
+      };
+
+      const response = await fetch(`${serverUrl}/outcomes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Outcome persistence failed: ${response.status}`);
+      }
+    },
+    [serverUrl],
+  );
+
+  const fetchLatestOutcomeForPass = useCallback(
+    async (passId: string): Promise<PassOutcome | null> => {
+      const response = await fetch(`${serverUrl}/passes/${encodeURIComponent(passId)}/outcome`);
+
+      if (response.status === 404) {
+        return null;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Latest outcome fetch failed: ${response.status}`);
+      }
+
+      const outcome = (await response.json()) as PassOutcome;
+      return withDerivedOutcomeFields(outcome);
+    },
+    [serverUrl],
+  );
+
+  const updateReviewOutcome = useCallback(
+    (
+      updater: (current: ReviewDrawerState) => ReviewDrawerState,
+      options: { persist?: boolean } = { persist: true },
+    ) => {
+      // Capture the next state outside the React state updater to avoid
+      // firing async work (persistence) inside a setState callback, which
+      // can race with subsequent rapid updates.
+      let nextOutcome: PassOutcome | null = null;
+
+      setReview((current) => {
+        if (!current) return current;
+        const next = updater(current);
+        nextOutcome = next.outcome;
+        return next;
+      });
+
+      if (options.persist !== false && nextOutcome) {
+        void persistOutcome(nextOutcome).catch(() => {
+          setError('Failed to persist review state');
+        });
+      }
+    },
+    [persistOutcome],
+  );
+
+  useEffect(() => {
+    reviewSignatureRef.current = review ? serializeOutcome(review.outcome) : null;
+  }, [review]);
+
+  useEffect(() => {
+    if (!review) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const syncLatestOutcome = async () => {
+      try {
+        const latestOutcome = await fetchLatestOutcomeForPass(review.pass.id);
+        if (!latestOutcome || isCancelled) {
+          return;
+        }
+
+        const nextSignature = serializeOutcome(latestOutcome);
+        if (reviewSignatureRef.current === nextSignature) {
+          return;
+        }
+
+        reviewSignatureRef.current = nextSignature;
+        setReview((current) => {
+          if (!current || current.pass.id !== review.pass.id) {
+            return current;
+          }
+
+          return {
+            ...current,
+            outcome: latestOutcome,
+            isOpen: true,
+          };
+        });
+      } catch {
+        // Keep polling quietly; transient errors should not disrupt local review.
+      }
+    };
+
+    void syncLatestOutcome();
+    const intervalId = window.setInterval(() => {
+      void syncLatestOutcome();
+    }, 1500);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [fetchLatestOutcomeForPass, review]);
+
   const startTargeting = useCallback(() => {
     setState('targeting');
     setError(null);
@@ -132,10 +439,10 @@ export function useContextual({
     setError(null);
     setStructuredPrompt(null);
     setInspectStack([]);
+    setReview(null);
     resetSurfaceState();
   }, [resetSurfaceState]);
 
-  // Setting a mode immediately starts targeting (items 4 + 5)
   const setMode = useCallback(
     (nextMode: AnnotationMode) => {
       setModeState(nextMode);
@@ -145,7 +452,7 @@ export function useContextual({
       resetSurfaceState();
       setState('targeting');
     },
-    [resetSurfaceState]
+    [resetSurfaceState],
   );
 
   const setTargetedElement = useCallback(
@@ -153,7 +460,6 @@ export function useContextual({
       setError(null);
 
       if (mode === 'inspect') {
-        // Append to inspect stack and stay in targeting for the next click
         setInspectStack((prev) => [...prev, el]);
         setTargetedElementState(null);
         setState('targeting');
@@ -162,7 +468,7 @@ export function useContextual({
         setState('annotating');
       }
     },
-    [mode]
+    [mode],
   );
 
   const removeFromInspectStack = useCallback((index: number) => {
@@ -188,7 +494,7 @@ export function useContextual({
       setError(null);
       setState('annotating');
     },
-    [queue]
+    [queue],
   );
 
   const removeFromQueue = useCallback(
@@ -205,7 +511,7 @@ export function useContextual({
         }
       }
     },
-    [editingInstructionId, removeFromQueueBase, state]
+    [editingInstructionId, removeFromQueueBase, state],
   );
 
   const clearQueue = useCallback(() => {
@@ -218,7 +524,6 @@ export function useContextual({
     resetSurfaceState();
   }, [clearQueueBase, resetSurfaceState, state]);
 
-  // Queue an instruction: parse actions from text, no server resolution.
   const queueInstruction = useCallback(
     (annotationText: string) => {
       if (!targetedElement) {
@@ -249,7 +554,6 @@ export function useContextual({
       }
 
       setStructuredPrompt(null);
-      // Return to targeting so user can immediately click the next element
       setState('targeting');
       resetSurfaceState();
     },
@@ -260,7 +564,7 @@ export function useContextual({
       resetSurfaceState,
       targetedElement,
       updateInstruction,
-    ]
+    ],
   );
 
   const submitPass = useCallback(async () => {
@@ -270,52 +574,271 @@ export function useContextual({
 
     const timestamp = new Date().toISOString();
     const instructions: Instruction[] = queue.map((queuedInstruction) => ({
+      id: queuedInstruction.id,
       element: queuedInstruction.element,
       rawText: queuedInstruction.rawText,
       actions: queuedInstruction.actions,
-      preAttachedContext: [], // No pre-resolution; agent reads context at execution time
+      preAttachedContext: [],
     }));
+
     const pass: Pass = {
       id: `pass_${Date.now()}`,
       timestamp,
+      project,
+      affectedContextTypes: deriveAffectedContextTypes(queue, affectedContextTypes),
+      loadedContextPaths: [...loadedContextPaths],
       instructions,
     };
 
     const prompt = formatPass(queue);
+    const initialOutcome = buildInitialOutcome(pass, new Date().toISOString());
+
     setStructuredPrompt(prompt);
 
     try {
-      await navigator.clipboard.writeText(prompt);
+      let nextError: string | null = null;
 
-      const payload: CreatePassRequest = { pass };
-      void fetch(`${serverUrl}/passes`, {
+      const passPayload: CreatePassRequest = { pass };
+      const passResponse = await fetch(`${serverUrl}/passes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => {
-        // Best effort only. Clipboard export is the critical path for the user.
+        body: JSON.stringify(passPayload),
+      });
+      if (!passResponse.ok) {
+        throw new Error(`Pass persistence failed: ${passResponse.status}`);
+      }
+      const persistedPass = (await passResponse.json()) as CreatePassResponse;
+
+      try {
+        await persistOutcome(initialOutcome);
+      } catch {
+        nextError = 'Pass persisted, but failed to initialize review state';
+      }
+
+      try {
+        // navigator.clipboard requires a secure context (HTTPS or localhost).
+        // Fall back to execCommand for HTTP dev environments.
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(prompt);
+        } else {
+          const textarea = document.createElement('textarea');
+          textarea.value = prompt;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+        }
+      } catch {
+        nextError = nextError ?? 'Pass persisted, but failed to copy the prompt to the clipboard';
+      }
+
+      setReview({
+        pass,
+        outcome: initialOutcome,
+        isOpen: true,
+        activeLearningInstructionId: null,
+        learningDrafts: {},
       });
 
       clearQueueBase();
-      setError(null);
-      setState('submitted');
+      setState('reviewing');
       setTargetedElementState(null);
       setLastAnnotationText('');
       setEditingInstructionId(null);
+      setStructuredPrompt(`Saved ${persistedPass.id}\n\n${prompt}`);
+      setError(nextError);
+    } catch {
+      setError('Failed to persist refinement pass locally');
+    }
+  }, [
+    affectedContextTypes,
+    clearQueueBase,
+    loadedContextPaths,
+    persistOutcome,
+    project,
+    queue,
+    serverUrl,
+  ]);
 
-      if (submitResetTimeoutRef.current !== null) {
-        window.clearTimeout(submitResetTimeoutRef.current);
+  const closeReview = useCallback(() => {
+    setReview((current) => (current ? { ...current, isOpen: false } : current));
+    if (state === 'reviewing') {
+      setState('idle');
+    }
+  }, [state]);
+
+  const markInstructionLooksGood = useCallback(
+    (instructionId: string) => {
+      updateReviewOutcome((current) => {
+        const nextReviews = current.outcome.instructionReviews?.map((reviewItem) =>
+          reviewItem.instructionId === instructionId
+            ? {
+                ...reviewItem,
+                status: 'looks-good' as const,
+                reviewedAt: new Date().toISOString(),
+              }
+            : reviewItem
+        ) ?? [];
+
+        return {
+          ...current,
+          outcome: withDerivedOutcomeFields({
+            ...current.outcome,
+            instructionReviews: nextReviews,
+          }),
+        };
+      });
+    },
+    [updateReviewOutcome],
+  );
+
+  const requestInstructionFollowUp = useCallback(
+    (instructionId: string) => {
+      if (!review) return;
+
+      const instruction = review.pass.instructions.find((item) => item.id === instructionId);
+      if (!instruction) return;
+
+      updateReviewOutcome((current) => {
+        const nextReviews = current.outcome.instructionReviews?.map((reviewItem) =>
+          reviewItem.instructionId === instructionId
+            ? {
+                ...reviewItem,
+                status: 'needs-another-pass' as const,
+                reviewedAt: new Date().toISOString(),
+              }
+            : reviewItem
+        ) ?? [];
+
+        return {
+          ...current,
+          outcome: withDerivedOutcomeFields({
+            ...current.outcome,
+            instructionReviews: nextReviews,
+          }),
+        };
+      });
+
+      setModeState('instruct');
+      setTargetedElementState(instruction.element);
+      setLastAnnotationText(instruction.rawText);
+      setError(null);
+      setState('annotating');
+    },
+    [review, updateReviewOutcome],
+  );
+
+  const openLearningDraft = useCallback(
+    (instructionId: string) => {
+      if (!review) return;
+
+      const instruction = review.pass.instructions.find((item) => item.id === instructionId);
+      if (!instruction) return;
+
+      setReview((current) => {
+        if (!current) return current;
+
+        return {
+          ...current,
+          activeLearningInstructionId: instructionId,
+          learningDrafts: {
+            ...current.learningDrafts,
+            [instructionId]:
+              current.learningDrafts[instructionId] ?? buildDefaultLearningDraft(instruction),
+          },
+        };
+      });
+    },
+    [review],
+  );
+
+  const cancelLearningDraft = useCallback(() => {
+    setReview((current) =>
+      current
+        ? {
+            ...current,
+            activeLearningInstructionId: null,
+          }
+        : current
+    );
+  }, []);
+
+  const updateLearningDraft = useCallback(
+    (instructionId: string, patch: Partial<InstructionLearningDraft>) => {
+      setReview((current) => {
+        if (!current) return current;
+
+        const existingDraft = current.learningDrafts[instructionId];
+        if (!existingDraft) return current;
+
+        return {
+          ...current,
+          learningDrafts: {
+            ...current.learningDrafts,
+            [instructionId]: {
+              ...existingDraft,
+              ...patch,
+            },
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const saveLearningDraft = useCallback(
+    async (instructionId: string) => {
+      if (!review) return;
+
+      const draft = review.learningDrafts[instructionId];
+      if (!draft) return;
+
+      const title = draft.title.trim();
+      const summary = draft.summary.trim();
+
+      if (!title || !summary) {
+        setError('Learning drafts need both a title and summary');
+        return;
       }
 
-      submitResetTimeoutRef.current = window.setTimeout(() => {
-        setState('idle');
-        setStructuredPrompt(null);
-        submitResetTimeoutRef.current = null;
-      }, 1500);
-    } catch {
-      setError('Failed to copy refinement pass to the clipboard');
-    }
-  }, [clearQueueBase, queue, serverUrl]);
+      const validDestinations: readonly string[] = DEFAULT_LEARNED_FOLDERS;
+      if (!validDestinations.includes(draft.destination)) {
+        setError(`Invalid learning destination: ${draft.destination}`);
+        return;
+      }
+
+      setError(null);
+
+      updateReviewOutcome((current) => {
+        const nextReviews = current.outcome.instructionReviews?.map((reviewItem) =>
+          reviewItem.instructionId === instructionId
+            ? {
+                ...reviewItem,
+                status: 'looks-good' as const,
+                learningDraft: {
+                  ...draft,
+                  title,
+                  summary,
+                },
+                reviewedAt: new Date().toISOString(),
+              }
+            : reviewItem
+        ) ?? [];
+
+        return {
+          ...current,
+          activeLearningInstructionId: null,
+          outcome: withDerivedOutcomeFields({
+            ...current.outcome,
+            instructionReviews: nextReviews,
+          }),
+        };
+      });
+    },
+    [review, updateReviewOutcome],
+  );
 
   return {
     state,
@@ -333,6 +856,14 @@ export function useContextual({
     clearQueue,
     editQueueItem,
     submitPass,
+    review,
+    closeReview,
+    markInstructionLooksGood,
+    requestInstructionFollowUp,
+    openLearningDraft,
+    cancelLearningDraft,
+    updateLearningDraft,
+    saveLearningDraft,
     lastAnnotationText,
     error,
     structuredPrompt,

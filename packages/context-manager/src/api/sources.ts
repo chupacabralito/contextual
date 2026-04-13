@@ -4,10 +4,11 @@ import type {
   SourceContentResponse,
   SourceListResponse,
 } from '../types.js';
+import { apiFetch } from './client.js';
 
 /** List all raw sources for a context type */
 export async function fetchSources(type: string): Promise<SourceListResponse> {
-  const res = await fetch(`/api/corpus/${encodeURIComponent(type)}/sources`);
+  const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}/sources`);
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<SourceListResponse>;
 }
@@ -17,7 +18,7 @@ export async function fetchSource(
   type: string,
   filename: string
 ): Promise<SourceContentResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/corpus/${encodeURIComponent(type)}/sources/${encodeURIComponent(filename)}`
   );
   if (!res.ok) throw new Error(await res.text());
@@ -29,7 +30,7 @@ export async function addSource(
   type: string,
   req: AddSourceRequest
 ): Promise<AddSourceResponse> {
-  const res = await fetch(`/api/corpus/${encodeURIComponent(type)}/sources`, {
+  const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}/sources`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -40,7 +41,7 @@ export async function addSource(
 
 /** Delete a raw source file */
 export async function deleteSource(type: string, filename: string): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/corpus/${encodeURIComponent(type)}/sources/${encodeURIComponent(filename)}`,
     { method: 'DELETE' }
   );

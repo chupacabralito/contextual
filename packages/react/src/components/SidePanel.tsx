@@ -14,11 +14,14 @@
 //           Stays expanded when content exists; manual collapse via chevron.
 // =============================================================================
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnnotationMode, QueuedInstruction, TargetedElement } from '@contextual/shared';
-import type { ContextualState } from '../hooks/useContextual.js';
+import type { ContextualState, ReviewDrawerState } from '../hooks/useContextual.js';
 import { InspectContent } from './InspectPanel.js';
+import { ReviewDrawer } from './ReviewDrawer.js';
 import { stripMentions } from '../mentions/parser.js';
+import { useTheme, useThemeToggle } from '../theme.js';
+import { MARIGOLD_SANS_BASE64 } from '../fonts/marigoldSans.js';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -47,6 +50,26 @@ interface SidePanelProps {
   onSubmitPass: () => void;
   /** Error message */
   error?: string | null;
+  /** Latest post-pass review state */
+  review: ReviewDrawerState | null;
+  /** Close the review drawer */
+  onCloseReview: () => void;
+  /** Mark a reviewed instruction as good */
+  onMarkInstructionLooksGood: (instructionId: string) => void;
+  /** Start a follow-up pass from a reviewed instruction */
+  onRequestInstructionFollowUp: (instructionId: string) => void;
+  /** Open the learning form for a reviewed instruction */
+  onOpenLearningDraft: (instructionId: string) => void;
+  /** Close the learning form */
+  onCancelLearningDraft: () => void;
+  /** Update a learning draft */
+  onUpdateLearningDraft: (instructionId: string, patch: {
+    title?: string;
+    summary?: string;
+    destination?: 'operator-preferences' | 'ui-patterns' | 'tool-routing' | 'project-decisions';
+  }) => void;
+  /** Save a learning draft */
+  onSaveLearningDraft: (instructionId: string) => Promise<void>;
   /** Stack of inspected elements */
   inspectStack: TargetedElement[];
   /** Remove an element from inspect stack by index */
@@ -55,6 +78,44 @@ interface SidePanelProps {
   onClearInspectStack: () => void;
   /** Server URL for inspect API calls */
   serverUrl: string;
+}
+
+const PANEL_MAX_WIDTH = 600;
+const PANEL_MIN_WIDTH = 160;
+const VIEWPORT_MARGIN = 12;
+const PANEL_MIN_BOTTOM_CLEARANCE = 40;
+
+function getViewportSize() {
+  if (typeof window === 'undefined') {
+    return { width: 1024, height: 768 };
+  }
+
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+}
+
+function getPanelWidth(viewportWidth: number) {
+  return Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, viewportWidth - VIEWPORT_MARGIN * 2));
+}
+
+function clampPanelPosition(
+  position: { x: number; y: number },
+  viewport: { width: number; height: number },
+  panelWidth: number
+) {
+  const maxX = Math.max(VIEWPORT_MARGIN, viewport.width - panelWidth - VIEWPORT_MARGIN);
+  const maxY = Math.max(VIEWPORT_MARGIN, viewport.height - PANEL_MIN_BOTTOM_CLEARANCE);
+
+  const nextX = Math.min(Math.max(position.x, VIEWPORT_MARGIN), maxX);
+  const nextY = Math.min(Math.max(position.y, VIEWPORT_MARGIN), maxY);
+
+  if (nextX === position.x && nextY === position.y) {
+    return position;
+  }
+
+  return { x: nextX, y: nextY };
 }
 
 // ---------------------------------------------------------------------------
@@ -73,15 +134,34 @@ export function SidePanel({
   onClearQueue,
   onSubmitPass,
   error,
+  review,
+  onCloseReview,
+  onMarkInstructionLooksGood,
+  onRequestInstructionFollowUp,
+  onOpenLearningDraft,
+  onCancelLearningDraft,
+  onUpdateLearningDraft,
+  onSaveLearningDraft,
   inspectStack,
   onRemoveFromInspectStack,
   onClearInspectStack,
   serverUrl,
 }: SidePanelProps) {
+  const t = useTheme();
+  const { isDark, toggle: toggleTheme } = useThemeToggle();
+  const [viewport, setViewport] = useState(getViewportSize);
+  const [panelWidth, setPanelWidth] = useState(() => getPanelWidth(getViewportSize().width));
+
   // -------------------------------------------------------------------------
-  // Drag state
+  // Drag state (move panel)
   // -------------------------------------------------------------------------
-  const [position, setPosition] = useState({ x: window.innerWidth - 380, y: 20 });
+  const [position, setPosition] = useState(() =>
+    clampPanelPosition(
+      { x: getViewportSize().width - PANEL_MAX_WIDTH - VIEWPORT_MARGIN, y: 20 },
+      getViewportSize(),
+      getPanelWidth(getViewportSize().width)
+    )
+  );
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
@@ -103,11 +183,13 @@ export function SidePanel({
     const handleMouseMove = (e: MouseEvent) => {
       const newX = e.clientX - dragOffset.current.x;
       const newY = e.clientY - dragOffset.current.y;
-      // Clamp so panel header stays reachable
-      setPosition({
-        x: Math.max(-300, Math.min(newX, window.innerWidth - 60)),
-        y: Math.max(0, Math.min(newY, window.innerHeight - 40)),
-      });
+      setPosition(() =>
+        clampPanelPosition(
+          { x: newX, y: newY },
+          { width: window.innerWidth, height: window.innerHeight },
+          panelWidth
+        )
+      );
     };
 
     const handleMouseUp = () => {
@@ -120,7 +202,75 @@ export function SidePanel({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging]);
+  }, [isDragging, panelWidth]);
+
+  // -------------------------------------------------------------------------
+  // Resize state (bottom-left drag to change width)
+  // -------------------------------------------------------------------------
+  // Dragging from the bottom-left: moving left widens the panel (and shifts
+  // position.x left), moving right narrows it (and shifts position.x right).
+  // The right edge of the panel stays anchored.
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+  const resizeStartPosX = useRef(0);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - resizeStartX.current;
+      // Dragging left (negative deltaX) makes the panel wider
+      const newWidth = Math.min(
+        PANEL_MAX_WIDTH,
+        Math.max(PANEL_MIN_WIDTH, resizeStartWidth.current - deltaX)
+      );
+      const widthDelta = newWidth - resizeStartWidth.current;
+      // Shift position.x to keep the right edge anchored
+      const newPosX = resizeStartPosX.current - widthDelta;
+
+      setPanelWidth(newWidth);
+      setPosition((prev) =>
+        clampPanelPosition(
+          { x: newPosX, y: prev.y },
+          { width: window.innerWidth, height: window.innerHeight },
+          newWidth
+        )
+      );
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setViewport(getViewportSize());
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Clamp width to viewport on window resize (don't shrink below min, don't exceed viewport)
+  useEffect(() => {
+    const maxForViewport = Math.min(PANEL_MAX_WIDTH, viewport.width - VIEWPORT_MARGIN * 2);
+    if (panelWidth > maxForViewport) {
+      setPanelWidth(maxForViewport);
+    }
+  }, [viewport, panelWidth]);
+
+  useEffect(() => {
+    setPosition((prev) => clampPanelPosition(prev, viewport, panelWidth));
+  }, [panelWidth, viewport]);
 
   // -------------------------------------------------------------------------
   // Collapse state
@@ -130,15 +280,99 @@ export function SidePanel({
   const hasQueueContent = queue.length > 0;
   const hasInspectContent = inspectStack.length > 0;
   const isActive = state !== 'idle';
+  const shouldShowReview = Boolean(
+    review?.isOpen && mode === 'instruct' && !isCollapsed && state !== 'annotating'
+  );
 
   const toggleCollapse = useCallback(() => {
     setIsCollapsed((prev) => !prev);
   }, []);
 
   // -------------------------------------------------------------------------
-  // Submitted flash state
+  // Inject MarigoldSans @font-face (once per document)
   // -------------------------------------------------------------------------
-  const isSubmitted = state === 'submitted';
+  useEffect(() => {
+    const STYLE_ID = 'contextual-marigold-font';
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `@font-face { font-family: 'MarigoldSans'; src: url('data:font/opentype;base64,${MARIGOLD_SANS_BASE64}') format('opentype'); font-weight: normal; font-style: normal; font-display: swap; }`;
+    document.head.appendChild(style);
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // External scrollbar (custom track/thumb to the RIGHT of the panel)
+  // -------------------------------------------------------------------------
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [scrollInfo, setScrollInfo] = useState({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
+  const [isScrollDragging, setIsScrollDragging] = useState(false);
+  const scrollDragStartY = useRef(0);
+  const scrollDragStartTop = useRef(0);
+
+  const updateScrollInfo = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setScrollInfo({
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    });
+  }, []);
+
+  // Sync scroll info on scroll and resize
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+
+    el.addEventListener('scroll', updateScrollInfo, { passive: true });
+    const ro = new ResizeObserver(updateScrollInfo);
+    ro.observe(el);
+    updateScrollInfo();
+
+    return () => {
+      el.removeEventListener('scroll', updateScrollInfo);
+      ro.disconnect();
+    };
+  }, [updateScrollInfo, isCollapsed, state]);
+
+  // Drag handling for custom scrollbar thumb
+  useEffect(() => {
+    if (!isScrollDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const track = trackRef.current;
+      const body = bodyRef.current;
+      if (!track || !body) return;
+
+      const trackRect = track.getBoundingClientRect();
+      const trackHeight = trackRect.height;
+      const deltaY = e.clientY - scrollDragStartY.current;
+      const thumbRatio = body.clientHeight / body.scrollHeight;
+      const thumbHeight = Math.max(24, trackHeight * thumbRatio);
+      const scrollableTrack = trackHeight - thumbHeight;
+
+      if (scrollableTrack <= 0) return;
+
+      const newThumbTop = Math.min(Math.max(0, scrollDragStartTop.current + deltaY), scrollableTrack);
+      const scrollRatio = newThumbTop / scrollableTrack;
+      body.scrollTop = scrollRatio * (body.scrollHeight - body.clientHeight);
+    };
+
+    const handleMouseUp = () => {
+      setIsScrollDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isScrollDragging]);
+
+  const canScroll = scrollInfo.scrollHeight > scrollInfo.clientHeight;
+  const thumbRatio = scrollInfo.clientHeight / (scrollInfo.scrollHeight || 1);
 
   // -------------------------------------------------------------------------
   // Render
@@ -153,11 +387,23 @@ export function SidePanel({
         left: position.x,
         top: position.y,
         zIndex: 2147483647,
-        width: 360,
+        width: panelWidth,
+        maxWidth: `calc(100vw - ${VIEWPORT_MARGIN * 2}px)`,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        userSelect: (isDragging || isScrollDragging || isResizing) ? 'none' : 'auto',
+        overflow: 'visible',
+      }}
+    >
+    {/* Inner clip wrapper: holds panel chrome, clips native scrollbar */}
+    <div
+      style={{
         display: 'flex',
         flexDirection: 'column',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        userSelect: isDragging ? 'none' : 'auto',
+        border: `1px solid ${t.border}`,
+        borderRadius: 4,
+        overflow: 'hidden',
+        backgroundColor: t.panelBg,
+        boxShadow: t.shadowPanel,
       }}
     >
       {/* ----------------------------------------------------------------- */}
@@ -170,33 +416,31 @@ export function SidePanel({
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '3px 8px',
-          backgroundColor: '#0d1321',
-          border: '1px solid rgba(148, 163, 184, 0.18)',
-          borderBottom: 'none',
-          borderRadius: '12px 12px 0 0',
+          backgroundColor: t.panelDeep,
+          borderBottom: `1px solid ${t.borderSubtle}`,
           cursor: isDragging ? 'grabbing' : 'grab',
           minHeight: 24,
         }}
       >
         {/* Left: status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {isSubmitted && (
+          {state === 'reviewing' && review?.isOpen && (
             <span style={{
               fontSize: 10,
               fontWeight: 600,
-              color: '#4ade80',
+              color: t.successText,
               letterSpacing: '0.02em',
             }}>
-              Pass Copied
+              Review Ready
             </span>
           )}
-          {!isSubmitted && !isActive && (
-            <span style={{ fontSize: 10, color: '#475569' }}>
+          {state === 'idle' && !isActive && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: isDark ? '#a3e635' : '#65a30d', fontFamily: "'MarigoldSans', sans-serif" }}>
               Contextual
             </span>
           )}
-          {isActive && !isSubmitted && (
-            <span style={{ fontSize: 10, color: '#64748b' }}>
+          {isActive && !(state === 'reviewing' && review?.isOpen) && (
+            <span style={{ fontSize: 10, color: t.textMuted }}>
               {mode === 'instruct' ? 'Instruct' : 'Inspect'} mode
             </span>
           )}
@@ -204,20 +448,59 @@ export function SidePanel({
 
         {/* Right: actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* Theme toggle (always visible) */}
+          <button
+            onClick={toggleTheme}
+            style={{
+              padding: '3px 7px',
+              fontSize: 15,
+              color: isDark ? '#a3e635' : '#65a30d',
+              backgroundColor: t.modeButtonInactiveBg,
+              border: `1px solid ${t.modeButtonInactiveBorder}`,
+              borderRadius: 5,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1,
+            }}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? '\u2600' : '\u263E'}
+          </button>
+
           {/* Collapse/expand toggle (always visible) */}
           <button
             onClick={toggleCollapse}
-            style={actionBarButtonStyle}
+            style={{
+              padding: '3px 7px',
+              fontSize: 15,
+              color: isDark ? '#a3e635' : '#65a30d',
+              backgroundColor: t.modeButtonInactiveBg,
+              border: `1px solid ${t.modeButtonInactiveBorder}`,
+              borderRadius: 5,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1,
+            }}
             title={isCollapsed ? 'Expand' : 'Collapse'}
           >
             {isCollapsed ? '\u25BC' : '\u25B2'}
           </button>
 
           {/* Esc (exit mode) */}
-          {isActive && !isSubmitted && (
+          {isActive && !(state === 'reviewing' && review?.isOpen) && (
             <button
               onClick={onCancel}
-              style={actionBarButtonStyle}
+              style={{
+                padding: '3px 7px',
+                fontSize: 15,
+                color: isDark ? '#a3e635' : '#65a30d',
+                backgroundColor: t.modeButtonInactiveBg,
+                border: `1px solid ${t.modeButtonInactiveBorder}`,
+                borderRadius: 5,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                lineHeight: 1,
+              }}
               title="Exit mode (Esc)"
             >
               Esc
@@ -234,12 +517,7 @@ export function SidePanel({
           display: 'flex',
           gap: 2,
           padding: '4px',
-          backgroundColor: '#111827',
-          borderLeft: '1px solid rgba(148, 163, 184, 0.18)',
-          borderRight: '1px solid rgba(148, 163, 184, 0.18)',
-          borderBottom: isCollapsed ? '1px solid rgba(148, 163, 184, 0.18)' : 'none',
-          borderRadius: isCollapsed ? '0 0 12px 12px' : 0,
-          boxShadow: isCollapsed ? '0 4px 16px rgba(0, 0, 0, 0.25)' : 'none',
+          backgroundColor: t.modeToggleBg,
         }}
       >
         {(['instruct', 'inspect'] as const).map((candidateMode) => {
@@ -253,13 +531,9 @@ export function SidePanel({
                 padding: '8px 12px',
                 fontSize: 13,
                 fontWeight: 600,
-                color: isActiveMode ? '#f8fafc' : '#94a3b8',
-                backgroundColor: isActiveMode
-                  ? 'rgba(59, 130, 246, 0.28)'
-                  : 'transparent',
-                border: isActiveMode
-                  ? '1px solid rgba(96, 165, 250, 0.45)'
-                  : '1px solid transparent',
+                color: isActiveMode ? t.accentText : t.textSecondary,
+                backgroundColor: isActiveMode ? t.accentBg : t.modeButtonInactiveBg,
+                border: `1px solid ${isActiveMode ? t.accentBorder : t.modeButtonInactiveBorder}`,
                 borderRadius: 8,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -271,7 +545,7 @@ export function SidePanel({
                 <span style={{
                   marginLeft: 4,
                   fontSize: 10,
-                  color: '#93c5fd',
+                  color: t.accentText,
                   fontWeight: 700,
                 }}>
                   {queue.length}
@@ -281,7 +555,7 @@ export function SidePanel({
                 <span style={{
                   marginLeft: 4,
                   fontSize: 10,
-                  color: '#93c5fd',
+                  color: t.accentText,
                   fontWeight: 700,
                 }}>
                   {inspectStack.length}
@@ -292,22 +566,35 @@ export function SidePanel({
         })}
       </div>
 
+      {shouldShowReview && review && (
+        <ReviewDrawer
+          review={review}
+          onClose={onCloseReview}
+          onMarkInstructionLooksGood={onMarkInstructionLooksGood}
+          onRequestInstructionFollowUp={onRequestInstructionFollowUp}
+          onOpenLearningDraft={onOpenLearningDraft}
+          onCancelLearningDraft={onCancelLearningDraft}
+          onUpdateLearningDraft={onUpdateLearningDraft}
+          onSaveLearningDraft={onSaveLearningDraft}
+        />
+      )}
+
       {/* ----------------------------------------------------------------- */}
       {/* Body: Queue or Inspect content                                    */}
       {/* ----------------------------------------------------------------- */}
       {!isCollapsed && (
         <div
+          ref={bodyRef}
           style={{
             maxHeight: 'calc(100vh - 120px)',
-            overflow: 'hidden',
+            overflowY: 'scroll',
+            overflowX: 'hidden',
+            marginRight: -20,
+            paddingRight: 20,
             display: 'flex',
             flexDirection: 'column',
-            backgroundColor: '#111827',
-            borderLeft: '1px solid rgba(148, 163, 184, 0.18)',
-            borderRight: '1px solid rgba(148, 163, 184, 0.18)',
-            borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
-            borderRadius: '0 0 12px 12px',
-            boxShadow: '0 18px 48px rgba(15, 23, 42, 0.45)',
+            backgroundColor: t.panelBg,
+            borderTop: `1px solid ${t.borderSubtle}`,
           }}
         >
           {/* Error banner */}
@@ -317,9 +604,9 @@ export function SidePanel({
                 padding: '10px 14px',
                 fontSize: 12,
                 lineHeight: 1.5,
-                color: '#fca5a5',
-                backgroundColor: 'rgba(127, 29, 29, 0.28)',
-                borderBottom: '1px solid rgba(248, 113, 113, 0.18)',
+                color: t.errorText,
+                backgroundColor: t.errorBg,
+                borderBottom: `1px solid ${t.errorBorder}`,
               }}
             >
               {error}
@@ -333,16 +620,25 @@ export function SidePanel({
               <div
                 style={{
                   padding: '10px 14px',
-                  borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
+                  borderBottom: `1px solid ${t.borderSubtle}`,
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.textPrimary }}>
                   {queue.length} instruction{queue.length === 1 ? '' : 's'}
                 </span>
-                <button onClick={onClearQueue} style={secondaryButtonStyle}>
+                <button onClick={onClearQueue} style={{
+                  padding: '5px 8px',
+                  fontSize: 11,
+                  color: t.inputText,
+                  backgroundColor: t.panelSurface,
+                  border: `1px solid ${t.borderSubtle}`,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}>
                   Clear
                 </button>
               </div>
@@ -356,7 +652,6 @@ export function SidePanel({
                     index={index}
                     total={queue.length}
                     onEdit={() => onEditInstruction(instruction.id)}
-                    onRemove={() => onRemoveInstruction(instruction.id)}
                     onMoveUp={() => onReorderInstruction(index, index - 1)}
                     onMoveDown={() => onReorderInstruction(index, index + 1)}
                   />
@@ -366,10 +661,9 @@ export function SidePanel({
               {/* Submit footer */}
               <div
                 style={{
-                  borderTop: '1px solid rgba(148, 163, 184, 0.12)',
+                  borderTop: `1px solid ${t.borderSubtle}`,
                   padding: 12,
-                  backgroundColor: '#0b1120',
-                  borderRadius: '0 0 12px 12px',
+                  backgroundColor: t.panelDeep,
                 }}
               >
                 <button
@@ -402,59 +696,116 @@ export function SidePanel({
               <div
                 style={{
                   padding: '10px 14px',
-                  borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
+                  borderBottom: `1px solid ${t.borderSubtle}`,
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
+                  flexShrink: 0,
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
-                  {inspectStack.length} element{inspectStack.length === 1 ? '' : 's'}
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.textPrimary }}>
+                  {inspectStack.length} element{inspectStack.length === 1 ? '' : 's'} inspected
                 </span>
-                <button onClick={onClearInspectStack} style={secondaryButtonStyle}>
-                  Clear
+                <button onClick={onClearInspectStack} style={{
+                  padding: '5px 8px',
+                  fontSize: 11,
+                  color: t.inputText,
+                  backgroundColor: t.panelSurface,
+                  border: `1px solid ${t.borderSubtle}`,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}>
+                  Clear All
                 </button>
               </div>
 
-              {/* Stacked inspect cards */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'grid', gap: 8 }}>
+              {/* Scrollable inspect cards, ordered by selection */}
+              <div style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}>
                 {inspectStack.map((target, index) => (
                   <div
                     key={`${target.selector}-${index}`}
                     style={{
-                      border: '1px solid rgba(148, 163, 184, 0.14)',
+                      border: `1px solid ${t.borderSubtle}`,
                       borderRadius: 10,
-                      backgroundColor: '#0f172a',
+                      backgroundColor: t.panelSurface,
                       overflow: 'hidden',
+                      flexShrink: 0,
                     }}
                   >
-                    {/* Card label + remove */}
+                    {/* Numbered card header with remove button */}
                     <div
                       style={{
+                        padding: '6px 10px',
+                        borderBottom: `1px solid ${t.borderSubtle}`,
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        padding: '8px 10px',
-                        borderBottom: '1px solid rgba(148, 163, 184, 0.08)',
+                        backgroundColor: t.panelDeep,
                       }}
                     >
-                      <span style={{ fontSize: 11, color: '#94a3b8' }}>
-                        {index + 1}. {target.label}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        {/* Selection order number */}
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 20,
+                          height: 20,
+                          borderRadius: '50%',
+                          backgroundColor: t.accentBg,
+                          border: `1px solid ${t.accentBorder}`,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: t.accentText,
+                          flexShrink: 0,
+                        }}>
+                          {index + 1}
+                        </span>
+                        <span style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: t.textPrimary,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {target.label}
+                        </span>
+                      </div>
                       <button
                         onClick={() => onRemoveFromInspectStack(index)}
-                        style={dangerButtonStyle}
+                        style={{
+                          padding: '2px 6px',
+                          fontSize: 10,
+                          color: t.textMuted,
+                          backgroundColor: 'transparent',
+                          border: `1px solid ${t.borderSubtle}`,
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          flexShrink: 0,
+                        }}
+                        title={`Remove element #${index + 1}`}
                       >
-                        Remove
+                        x
                       </button>
                     </div>
 
-                    {/* Inspect content for this element */}
-                    <InspectContent
-                      target={target}
-                      serverUrl={serverUrl}
-                      onClose={() => onRemoveFromInspectStack(index)}
-                    />
+                    {/* Inspect content – constrained height with internal scroll */}
+                    <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                      <InspectContent
+                        target={target}
+                        serverUrl={serverUrl}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -463,16 +814,139 @@ export function SidePanel({
 
           {/* ---- Empty body: no content to show ---- */}
           {!hasQueueContent && !hasInspectContent && (
-            <div style={{ padding: 14, fontSize: 12, color: '#64748b', lineHeight: 1.6 }}>
+            <div style={{ padding: 14, fontSize: 12, color: t.textMuted, lineHeight: 1.6 }}>
               {isActive
                 ? mode === 'instruct'
-                  ? 'Click elements to add instructions.'
+                  ? review?.isOpen
+                    ? 'Review the latest pass or click Instruct to start another pass.'
+                    : 'Click elements to add instructions.'
                   : 'Click an element to see its history.'
                 : 'Select a mode to begin.'}
             </div>
           )}
         </div>
       )}
+
+    </div>
+    {/* End inner clip wrapper */}
+
+    {/* Bottom-left resize handle (perforation grip) */}
+    {!isCollapsed && (
+      <div
+        data-contextual="resize-handle"
+        style={{
+          position: 'absolute',
+          left: 0,
+          bottom: 0,
+          width: 24,
+          height: 24,
+          cursor: 'nesw-resize',
+          zIndex: 10,
+          borderBottomLeftRadius: 4,
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          resizeStartX.current = e.clientX;
+          resizeStartWidth.current = panelWidth;
+          resizeStartPosX.current = position.x;
+          setIsResizing(true);
+        }}
+      >
+        {/* Perforation dots in a triangular arrangement */}
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 18 18"
+          style={{
+            position: 'absolute',
+            left: 3,
+            bottom: 3,
+          }}
+        >
+          {/* Row 1 (bottom): 3 dots */}
+          <circle cx="2"  cy="16" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.8" />
+          <circle cx="8"  cy="16" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.7" />
+          <circle cx="14" cy="16" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.6" />
+          {/* Row 2: 2 dots */}
+          <circle cx="2"  cy="10" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.7" />
+          <circle cx="8"  cy="10" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.6" />
+          {/* Row 3 (top): 1 dot */}
+          <circle cx="2"  cy="4" r="1.5" fill={isDark ? '#a3e635' : '#65a30d'} opacity="0.6" />
+        </svg>
+      </div>
+    )}
+
+    {/* External scrollbar track (to the RIGHT of the panel) */}
+    {canScroll && !isCollapsed && (() => {
+      const trackHeight = bodyRef.current?.clientHeight ?? 0;
+      const thumbHeight = Math.max(24, trackHeight * thumbRatio);
+      const scrollableRange = scrollInfo.scrollHeight - scrollInfo.clientHeight;
+      const scrollFraction = scrollableRange > 0 ? scrollInfo.scrollTop / scrollableRange : 0;
+      const thumbTop = scrollFraction * (trackHeight - thumbHeight);
+
+      return (
+        <div
+          ref={trackRef}
+          data-contextual="scrollbar-track"
+          style={{
+            position: 'absolute',
+            right: -14,
+            top: 0,
+            bottom: 0,
+            width: 6,
+            borderRadius: 3,
+            backgroundColor: 'transparent',
+            cursor: 'pointer',
+            zIndex: 1,
+          }}
+          onMouseDown={(e) => {
+            // Click-to-jump: scroll to the clicked position on the track
+            const body = bodyRef.current;
+            const track = trackRef.current;
+            if (!body || !track) return;
+
+            const trackRect = track.getBoundingClientRect();
+            const clickY = e.clientY - trackRect.top;
+            const trackH = trackRect.height;
+            const ratio = clickY / trackH;
+            body.scrollTop = ratio * (body.scrollHeight - body.clientHeight);
+          }}
+        >
+          {/* Thumb */}
+          <div
+            style={{
+              position: 'absolute',
+              top: thumbTop,
+              left: 0,
+              width: 6,
+              height: thumbHeight,
+              borderRadius: 3,
+              backgroundColor: isDark ? 'rgba(163, 230, 53, 0.5)' : 'rgba(101, 163, 13, 0.5)',
+              transition: isScrollDragging ? 'none' : 'top 0.08s ease-out',
+              cursor: 'grab',
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              scrollDragStartY.current = e.clientY;
+              const track = trackRef.current;
+              const body = bodyRef.current;
+              if (track && body) {
+                const trackRect = track.getBoundingClientRect();
+                const trackH = trackRect.height;
+                const tHeight = Math.max(24, trackH * (body.clientHeight / body.scrollHeight));
+                const scrollable = body.scrollHeight - body.clientHeight;
+                const fraction = scrollable > 0 ? body.scrollTop / scrollable : 0;
+                scrollDragStartTop.current = fraction * (trackH - tHeight);
+              }
+              setIsScrollDragging(true);
+            }}
+          />
+        </div>
+      );
+    })()}
+
     </div>
   );
 }
@@ -486,7 +960,6 @@ interface QueueItemProps {
   index: number;
   total: number;
   onEdit: () => void;
-  onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
 }
@@ -496,10 +969,10 @@ function QueueItem({
   index,
   total,
   onEdit,
-  onRemove,
   onMoveUp,
   onMoveDown,
 }: QueueItemProps) {
+  const t = useTheme();
   const plainText = stripMentions(instruction.rawText);
   const summary = plainText
     ? plainText.split('\n')[0]!.trim()
@@ -510,21 +983,21 @@ function QueueItem({
   return (
     <section
       style={{
-        border: '1px solid rgba(148, 163, 184, 0.14)',
+        border: `1px solid ${t.borderSubtle}`,
         borderRadius: 10,
-        backgroundColor: '#0f172a',
+        backgroundColor: t.panelSurface,
         padding: 10,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: t.textSecondary, marginBottom: 4 }}>
             {index + 1}. {instruction.element.label}
           </div>
           <div
             style={{
               fontSize: 12,
-              color: '#e2e8f0',
+              color: t.inputText,
               lineHeight: 1.5,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -540,79 +1013,58 @@ function QueueItem({
           <button
             onClick={onMoveUp}
             disabled={index === 0}
-            style={iconBtnStyle(index === 0)}
+            style={{
+              width: 24,
+              height: 24,
+              padding: 0,
+              fontSize: 11,
+              color: index === 0 ? t.textMuted : t.inputText,
+              backgroundColor: t.panelBg,
+              border: `1px solid ${t.border}`,
+              borderRadius: 6,
+              cursor: index === 0 ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit',
+            }}
           >
             &uarr;
           </button>
           <button
             onClick={onMoveDown}
             disabled={index === total - 1}
-            style={iconBtnStyle(index === total - 1)}
+            style={{
+              width: 24,
+              height: 24,
+              padding: 0,
+              fontSize: 11,
+              color: index === total - 1 ? t.textMuted : t.inputText,
+              backgroundColor: t.panelBg,
+              border: `1px solid ${t.border}`,
+              borderRadius: 6,
+              cursor: index === total - 1 ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit',
+            }}
           >
             &darr;
           </button>
         </div>
       </div>
 
-      {/* Actions count + edit/remove */}
+      {/* Actions count + edit */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-        <span style={{ fontSize: 11, color: '#64748b' }}>
+        <span style={{ fontSize: 11, color: t.textMuted }}>
           {instruction.actions.length} action{instruction.actions.length === 1 ? '' : 's'}
         </span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={onEdit} style={secondaryButtonStyle}>Edit</button>
-          <button onClick={onRemove} style={dangerButtonStyle}>Remove</button>
-        </div>
+        <button onClick={onEdit} style={{
+          padding: '5px 8px',
+          fontSize: 11,
+          color: t.inputText,
+          backgroundColor: t.panelSurface,
+          border: `1px solid ${t.borderSubtle}`,
+          borderRadius: 6,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}>Edit</button>
       </div>
     </section>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-function iconBtnStyle(disabled: boolean): React.CSSProperties {
-  return {
-    width: 24,
-    height: 24,
-    padding: 0,
-    fontSize: 11,
-    color: disabled ? '#475569' : '#e2e8f0',
-    backgroundColor: '#111827',
-    border: '1px solid rgba(148, 163, 184, 0.18)',
-    borderRadius: 6,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    fontFamily: 'inherit',
-  };
-}
-
-const secondaryButtonStyle: React.CSSProperties = {
-  padding: '5px 8px',
-  fontSize: 11,
-  color: '#e2e8f0',
-  backgroundColor: 'rgba(30, 41, 59, 0.9)',
-  border: '1px solid rgba(148, 163, 184, 0.16)',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-};
-
-const dangerButtonStyle: React.CSSProperties = {
-  ...secondaryButtonStyle,
-  color: '#fca5a5',
-  backgroundColor: 'rgba(127, 29, 29, 0.28)',
-  border: '1px solid rgba(248, 113, 113, 0.18)',
-};
-
-const actionBarButtonStyle: React.CSSProperties = {
-  padding: '2px 6px',
-  fontSize: 10,
-  color: '#64748b',
-  backgroundColor: 'transparent',
-  border: '1px solid rgba(148, 163, 184, 0.12)',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-  lineHeight: 1,
-};

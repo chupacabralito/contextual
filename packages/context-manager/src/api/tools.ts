@@ -1,9 +1,8 @@
 import type { ConfiguredTool } from '../types.js';
-
-const SERVER_URL = 'http://localhost:4700';
+import { apiFetch } from './client.js';
 
 export async function fetchTools(): Promise<ConfiguredTool[]> {
-  const response = await fetch(`${SERVER_URL}/tools`);
+  const response = await apiFetch('/tools');
   if (!response.ok) {
     throw new Error('Failed to load tools from server');
   }
@@ -12,7 +11,7 @@ export async function fetchTools(): Promise<ConfiguredTool[]> {
 }
 
 export async function saveTools(tools: ConfiguredTool[]): Promise<ConfiguredTool[]> {
-  const response = await fetch(`${SERVER_URL}/tools`, {
+  const response = await apiFetch('/tools', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tools }),

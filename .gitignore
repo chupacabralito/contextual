@@ -19,6 +19,27 @@ packages/context-manager/vite.config.d.ts.map
 .env
 .env.local
 
+# Local agent/workspace artifacts
+.claude/
+workspace/
+CODEX-SPEC-2.md
+docs/PARALLEL-INTEGRATION-HANDOFF-02.md
+docs/STRATEGY-HANDOFF.md
+docs/PRODUCT-STRATEGY.md
+docs/GENERALISTA-CONNECTION.md
+docs/TODO.md
+docs/decisions/
+
+# Font source files (only .otf shipped in packages)
+/font/
+
+# Local context artifacts (repo's own contextual data)
+/brief.md
+/learned/
+/research/_sources/
+/research/compiled.md
+/test-context/
+
 # Logs
 *.log
 

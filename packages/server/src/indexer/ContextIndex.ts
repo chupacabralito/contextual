@@ -177,12 +177,18 @@ export class ContextIndex {
       : this.searchWithoutFts(query, type);
 
     if (rows.length > 0) {
-      const maxRank = Math.max(...rows.map((row) => Math.abs(row.rank)));
+      // FTS5 BM25 ranks are negative (more negative = more relevant).
+      // Non-FTS ranks use 1/score (smaller = more relevant).
+      // Normalize to 0-1 range where 1 = most relevant.
+      const ranks = rows.map((row) => Math.abs(row.rank));
+      const minRank = Math.min(...ranks);
+      const maxRank = Math.max(...ranks);
+      const range = maxRank - minRank;
       return rows.map((row) => ({
         content: row.content,
         source: row.source,
         date: row.date,
-        relevance: maxRank === 0 ? 1 : Math.max(0, 1 - Math.abs(row.rank) / (maxRank + 1)),
+        relevance: range === 0 ? 1 : Math.max(0, Math.min(1, 1 - (Math.abs(row.rank) - minRank) / range)),
       }));
     }
 
@@ -262,6 +268,20 @@ export class ContextIndex {
       });
     }
     stmt.free();
+
+    if (!type) {
+      for (const contextType of CONTEXT_TYPES) {
+        if (!contextType.toLowerCase().startsWith(normalized)) {
+          continue;
+        }
+
+        suggestions.set(`type:${contextType}`, {
+          text: contextType,
+          type: contextType,
+          preview: `Context type: ${contextType}`,
+        });
+      }
+    }
 
     return Array.from(suggestions.values()).slice(0, 10);
   }
@@ -398,13 +418,16 @@ export class ContextIndex {
             VALUES ($content, $source, $date, $contextType)
           `);
 
-      statement.run({
-        $content: document.content,
-        $source: document.source,
-        $date: document.date ?? null,
-        $contextType: document.contextType,
-      });
-      statement.free();
+      try {
+        statement.run({
+          $content: document.content,
+          $source: document.source,
+          $date: document.date ?? null,
+          $contextType: document.contextType,
+        });
+      } finally {
+        statement.free();
+      }
     } catch (error) {
       console.error(`Failed to index ${filePath}:`, error);
     }

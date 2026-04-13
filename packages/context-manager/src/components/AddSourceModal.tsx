@@ -5,7 +5,7 @@
 // User provides a label and content, which gets saved as a file in _sources/.
 // =============================================================================
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ContextType } from '../hooks/useCorpus.js';
 import { TYPE_LABELS } from '../hooks/useCorpus.js';
 
@@ -20,6 +20,32 @@ export function AddSourceModal({ type, onSubmit, onClose }: AddSourceModalProps)
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Trap focus inside modal
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    first?.focus();
+
+    function handleTab(e: KeyboardEvent) {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first?.focus(); }
+      }
+    }
+
+    dialog.addEventListener('keydown', handleTab);
+    return () => dialog.removeEventListener('keydown', handleTab);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!content.trim()) {
@@ -54,6 +80,7 @@ export function AddSourceModal({ type, onSubmit, onClose }: AddSourceModalProps)
   return (
     <div className="modal-overlay" onClick={onClose} onKeyDown={handleKeyDown}>
       <div
+        ref={dialogRef}
         className="modal-content"
         onClick={(e) => e.stopPropagation()}
         role="dialog"

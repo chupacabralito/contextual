@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 
+import { DEFAULT_CONTEXT_FOLDERS } from '@contextual/shared';
 import { scaffold } from '../dist/scaffold.js';
 
 test('scaffold creates the standard context folder structure with READMEs', async () => {
@@ -16,13 +17,7 @@ test('scaffold creates the standard context folder structure with READMEs', asyn
     });
 
     assert.equal(result.projectPath, path.join(tempRoot, 'alpha-project'));
-    assert.deepEqual(result.createdFolders, [
-      'research',
-      'taste',
-      'strategy',
-      'design-system',
-      'stakeholders',
-    ]);
+    assert.deepEqual(result.createdFolders, DEFAULT_CONTEXT_FOLDERS);
 
     for (const folder of result.createdFolders) {
       const readmePath = path.join(result.projectPath, folder, 'README.md');

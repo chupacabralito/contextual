@@ -71,13 +71,13 @@ function getElementSelector(el: HTMLElement): string {
   // ID is most specific
   if (el.id) return `#${el.id}`;
 
-  // Build selector from tag + classes
+  // Build selector from tag + classes (escape special chars for valid CSS selectors)
   const tag = el.tagName.toLowerCase();
   const classes = el.className && typeof el.className === 'string'
-    ? `.${el.className.split(' ').filter(Boolean).join('.')}`
+    ? el.className.split(' ').filter(Boolean).map((c) => `.${CSS.escape(c)}`).join('')
     : '';
 
-  // Add nth-child if needed for uniqueness
+  // Add nth-of-type if needed for uniqueness among same-tag siblings
   const parent = el.parentElement;
   if (parent) {
     const siblings = Array.from(parent.children).filter(
@@ -85,11 +85,25 @@ function getElementSelector(el: HTMLElement): string {
     );
     if (siblings.length > 1) {
       const index = siblings.indexOf(el) + 1;
-      return `${tag}${classes}:nth-child(${index})`;
+      return `${tag}${classes}:nth-of-type(${index})`;
     }
   }
 
   return `${tag}${classes}`;
+}
+
+/**
+ * Walk up the DOM tree and collect selectors for all ancestor elements.
+ * Stops at <body>. Returns parent-first order (nearest ancestor first).
+ */
+function getAncestorSelectors(el: HTMLElement): string[] {
+  const ancestors: string[] = [];
+  let current = el.parentElement;
+  while (current && current.tagName !== 'BODY' && current.tagName !== 'HTML') {
+    ancestors.push(getElementSelector(current));
+    current = current.parentElement;
+  }
+  return ancestors;
 }
 
 /**
@@ -176,6 +190,7 @@ export function useElementTargeting({
         selectionMode,
         boundingBox: getBoundingBox(elementToTarget),
         tagName: elementToTarget.tagName.toLowerCase(),
+        ancestorSelectors: getAncestorSelectors(elementToTarget),
         ...(selectedText ? { selectedText } : {}),
       };
 

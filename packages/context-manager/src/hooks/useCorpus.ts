@@ -2,62 +2,34 @@
 // useCorpus Hook
 // =============================================================================
 // Fetches the corpus overview: all 7 context types with their compiled file
-// metadata and source counts. Primary data hook for the dashboard.
+// metadata, source counts, and priority tiers. Primary data hook for the
+// corpus health view.
 // =============================================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { apiFetch } from '../api/client.js';
 
 // ---------------------------------------------------------------------------
-// Inline types (mirror the shared contract until Codex wires up types.ts)
+// Re-export shared types so existing imports across context-manager stay stable
 // ---------------------------------------------------------------------------
 
-export type ContextType =
-  | 'research'
-  | 'taste'
-  | 'strategy'
-  | 'design-system'
-  | 'stakeholders'
-  | 'technical'
-  | 'business';
+export type {
+  ContextType,
+  ContextPriority,
+  SectionMeta,
+  CompiledFileMeta,
+  CorpusTypeEntry,
+  CorpusResponse,
+} from '@contextual/shared';
 
-export const CONTEXT_TYPES: ContextType[] = [
-  'research',
-  'taste',
-  'strategy',
-  'design-system',
-  'stakeholders',
-  'technical',
-  'business',
-];
+export { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextual/shared';
 
-export interface SectionMeta {
-  title: string;
-  startLine: number;
-  endLine: number;
-  tokenEstimate: number;
-}
-
-export interface CompiledFileMeta {
-  type: ContextType;
-  title: string;
-  lastCompiled: string;
-  sourceCount: number;
-  sections: SectionMeta[];
-  totalTokenEstimate: number;
-}
-
-export interface CorpusTypeEntry {
-  type: ContextType;
-  exists: boolean;
-  meta: CompiledFileMeta | null;
-  sourceCount: number;
-}
-
-export interface CorpusResponse {
-  contextRoot: string;
-  types: CorpusTypeEntry[];
-  totalTokenEstimate: number;
-}
+import type {
+  ContextType,
+  ContextPriority,
+  CorpusResponse,
+} from '@contextual/shared';
+import { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextual/shared';
 
 // ---------------------------------------------------------------------------
 // Labels & descriptions
@@ -83,6 +55,18 @@ export const TYPE_DESCRIPTIONS: Record<ContextType, string> = {
   business: 'Business requirements, models, revenue considerations',
 };
 
+export const PRIORITY_LABELS: Record<ContextPriority, string> = {
+  system: 'System',
+  project: 'Project',
+  reference: 'Reference',
+};
+
+export const PRIORITY_DESCRIPTIONS: Record<ContextPriority, string> = {
+  system: 'Always fully loaded by the agent',
+  project: 'Selectively loaded based on project brief',
+  reference: 'Available on demand when needed',
+};
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -98,16 +82,28 @@ export function useCorpus(): UseCorpusReturn {
   const [data, setData] = useState<CorpusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasLoadedRef = useRef(false);
 
   const fetchData = useCallback(async () => {
-    setIsLoading(true);
+    setIsLoading(!hasLoadedRef.current);
     setError(null);
 
     try {
-      const res = await fetch('/api/corpus');
+      const res = await apiFetch('/api/corpus');
       if (!res.ok) throw new Error(`Failed to fetch corpus: ${res.status}`);
-      const json: CorpusResponse = await res.json();
-      setData(json);
+      const json = await res.json() as CorpusResponse;
+
+      // Ensure priority is populated (backcompat with middleware that doesn't send it yet)
+      const normalized: CorpusResponse = {
+        ...json,
+        types: json.types.map((entry) => ({
+          ...entry,
+          priority: entry.priority ?? DEFAULT_PRIORITIES[entry.type],
+        })),
+      };
+
+      setData(normalized);
+      hasLoadedRef.current = true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load corpus';
       setError(message);
@@ -120,9 +116,11 @@ export function useCorpus(): UseCorpusReturn {
           exists: false,
           meta: null,
           sourceCount: 0,
+          priority: DEFAULT_PRIORITIES[type],
         })),
         totalTokenEstimate: 0,
       });
+      hasLoadedRef.current = true;
     } finally {
       setIsLoading(false);
     }
@@ -130,8 +128,22 @@ export function useCorpus(): UseCorpusReturn {
 
   useEffect(() => {
     let active = true;
+    let fetching = false;
     void fetchData().then(() => { if (!active) return; });
-    return () => { active = false; };
+
+    // Poll every 5 seconds to detect external file changes (files added outside the UI).
+    // Guard against overlapping fetches if the previous one is still in-flight.
+    const interval = setInterval(() => {
+      if (active && !fetching) {
+        fetching = true;
+        void fetchData().finally(() => { fetching = false; });
+      }
+    }, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [fetchData]);
 
   return { data, isLoading, error, refetch: fetchData };

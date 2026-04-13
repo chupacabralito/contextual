@@ -11,18 +11,19 @@
 import React, { useEffect, useState } from 'react';
 import type { InspectResponse, TargetedElement } from '@contextual/shared';
 import { stripMentions } from '../mentions/parser.js';
+import { useTheme } from '../theme.js';
 
 interface InspectContentProps {
   target: TargetedElement;
   serverUrl: string;
-  onClose: () => void;
 }
 
 /**
  * Decision trail content for the SidePanel body.
  * Fetches and displays pass history + context lineage for the targeted element.
  */
-export function InspectContent({ target, serverUrl, onClose }: InspectContentProps) {
+export function InspectContent({ target, serverUrl }: InspectContentProps) {
+  const t = useTheme();
   const [data, setData] = useState<InspectResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,9 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
 
       try {
         const query = new URLSearchParams({ selector: target.selector });
+        if (target.ancestorSelectors?.length) {
+          query.set('ancestors', target.ancestorSelectors.join(','));
+        }
         const response = await fetch(`${serverUrl}/inspect?${query.toString()}`, {
           signal: controller.signal,
         });
@@ -63,60 +67,28 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
     void loadInspectData();
 
     return () => controller.abort();
-  }, [serverUrl, target.selector]);
+  }, [serverUrl, target.selector, target.ancestorSelectors]);
 
   const hasHistory = Boolean(
-    data && (data.passes.length > 0 || data.contextHistory.length > 0)
+    data && (data.passes.length > 0 || (data.inheritedPasses?.length ?? 0) > 0 || data.contextHistory.length > 0)
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-      {/* Header: element label + close */}
-      <div
-        style={{
-          padding: '10px 14px',
-          borderBottom: '1px solid rgba(148, 163, 184, 0.12)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 10,
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontSize: 11,
-              color: '#94a3b8',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-            }}
-          >
-            Decision Trail
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', marginTop: 3 }}>
-            {target.label}
-          </div>
-        </div>
-
-        <button onClick={onClose} style={closeButtonStyle}>
-          Back
-        </button>
-      </div>
-
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       {/* Content area */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'grid', gap: 12 }}>
+      <div style={{ padding: 12, display: 'grid', gap: 12 }}>
         {loading && (
-          <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: t.textSecondary, lineHeight: 1.6 }}>
             Loading decision trail...
           </div>
         )}
 
         {!loading && error && (
-          <div style={{ fontSize: 12, color: '#fca5a5', lineHeight: 1.6 }}>{error}</div>
+          <div style={{ fontSize: 12, color: t.errorText, lineHeight: 1.6 }}>{error}</div>
         )}
 
         {!loading && !error && !hasHistory && (
-          <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: t.textSecondary, lineHeight: 1.6 }}>
             No history for this element yet.
           </div>
         )}
@@ -124,7 +96,7 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
         {/* Passes with full context lineage */}
         {!loading && !error && data?.passes.length ? (
           <section>
-            <div style={sectionTitleStyle}>Passes</div>
+            <div style={sectionTitleStyle(t.textSecondary)}>Passes</div>
             <div style={{ display: 'grid', gap: 8 }}>
               {data.passes.map((passRef) => {
                 const summary =
@@ -134,20 +106,20 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
                   <article
                     key={`${passRef.passId}-${passRef.timestamp}`}
                     style={{
-                      border: '1px solid rgba(148, 163, 184, 0.14)',
+                      border: `1px solid ${t.borderSubtle}`,
                       borderRadius: 10,
-                      backgroundColor: '#0f172a',
+                      backgroundColor: t.panelSurface,
                       padding: 10,
                     }}
                   >
-                    <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4 }}>
+                    <div style={{ fontSize: 10, color: t.textSecondary, marginBottom: 4 }}>
                       {new Date(passRef.timestamp).toLocaleString()}
                     </div>
                     <div
                       style={{
                         fontSize: 12,
                         fontWeight: 600,
-                        color: '#f8fafc',
+                        color: t.textPrimary,
                         lineHeight: 1.5,
                       }}
                     >
@@ -157,7 +129,7 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
                     {/* Action references */}
                     {passRef.instruction.actions.length > 0 && (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 3 }}>
+                        <div style={{ fontSize: 10, color: t.textMuted, marginBottom: 3 }}>
                           Actions
                         </div>
                         {passRef.instruction.actions.map((action, idx) => (
@@ -169,9 +141,9 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
                               marginRight: 4,
                               marginBottom: 3,
                               fontSize: 10,
-                              color: '#93c5fd',
-                              backgroundColor: 'rgba(59, 130, 246, 0.12)',
-                              border: '1px solid rgba(59, 130, 246, 0.2)',
+                              color: t.accentText,
+                              backgroundColor: t.accentBg,
+                              border: `1px solid ${t.accentBorder}`,
                               borderRadius: 4,
                               fontFamily: '"SF Mono", Menlo, monospace',
                             }}
@@ -185,7 +157,7 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
                     {/* Pre-attached context */}
                     {passRef.instruction.preAttachedContext.length > 0 && (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 3 }}>
+                        <div style={{ fontSize: 10, color: t.textMuted, marginBottom: 3 }}>
                           Context Used
                         </div>
                         {passRef.instruction.preAttachedContext.map((snippet, idx) => (
@@ -199,13 +171,13 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
                               borderRadius: 6,
                             }}
                           >
-                            <div style={{ fontSize: 10, color: '#86efac', marginBottom: 2 }}>
+                            <div style={{ fontSize: 10, color: t.successText, marginBottom: 2 }}>
                               /{snippet.type} - {snippet.query}
                             </div>
-                            <div style={{ fontSize: 11, color: '#e2e8f0', lineHeight: 1.5 }}>
+                            <div style={{ fontSize: 11, color: t.inputText, lineHeight: 1.5 }}>
                               {snippet.content}
                             </div>
-                            <div style={{ fontSize: 9, color: '#64748b', marginTop: 3 }}>
+                            <div style={{ fontSize: 9, color: t.textMuted, marginTop: 3 }}>
                               {snippet.source}
                             </div>
                           </div>
@@ -219,28 +191,90 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
           </section>
         ) : null}
 
+        {/* Inherited passes from ancestor elements */}
+        {!loading && !error && data?.inheritedPasses?.length ? (
+          <section>
+            <div style={sectionTitleStyle(t.textSecondary)}>Inherited</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {data.inheritedPasses.map((passRef) => {
+                const summary =
+                  stripMentions(passRef.instruction.rawText) || 'Action-only instruction';
+                const ancestorLabel = passRef.inheritedFrom ?? 'ancestor';
+
+                return (
+                  <article
+                    key={`inherited-${passRef.passId}-${passRef.timestamp}`}
+                    style={{
+                      border: `1px solid ${t.borderSubtle}`,
+                      borderRadius: 10,
+                      backgroundColor: t.panelSurface,
+                      padding: 10,
+                      opacity: 0.85,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <div style={{ fontSize: 10, color: t.textSecondary }}>
+                        {new Date(passRef.timestamp).toLocaleString()}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 9,
+                          color: t.textMuted,
+                          padding: '1px 5px',
+                          backgroundColor: 'rgba(128,128,128,0.1)',
+                          borderRadius: 4,
+                          fontFamily: '"SF Mono", Menlo, monospace',
+                        }}
+                      >
+                        via {ancestorLabel}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: t.textPrimary,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {summary}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         {/* Standalone context history */}
         {!loading && !error && data?.contextHistory.length ? (
           <section>
-            <div style={sectionTitleStyle}>Context History</div>
+            <div style={sectionTitleStyle(t.textSecondary)}>Context History</div>
             <div style={{ display: 'grid', gap: 8 }}>
               {data.contextHistory.map((snippet, index) => (
                 <article
                   key={`${snippet.source}-${index}`}
                   style={{
-                    border: '1px solid rgba(148, 163, 184, 0.14)',
+                    border: `1px solid ${t.borderSubtle}`,
                     borderRadius: 10,
-                    backgroundColor: '#0f172a',
+                    backgroundColor: t.panelSurface,
                     padding: 10,
                   }}
                 >
-                  <div style={{ fontSize: 10, color: '#86efac', marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, color: t.successText, marginBottom: 4 }}>
                     /{snippet.type} - {snippet.query}
                   </div>
-                  <div style={{ fontSize: 11, color: '#e2e8f0', lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 11, color: t.inputText, lineHeight: 1.6 }}>
                     {snippet.content}
                   </div>
-                  <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>
+                  <div style={{ fontSize: 10, color: t.textMuted, marginTop: 6 }}>
                     {snippet.source}
                   </div>
                 </article>
@@ -253,21 +287,12 @@ export function InspectContent({ target, serverUrl, onClose }: InspectContentPro
   );
 }
 
-const closeButtonStyle: React.CSSProperties = {
-  padding: '5px 8px',
-  fontSize: 11,
-  color: '#cbd5e1',
-  backgroundColor: 'rgba(30, 41, 59, 0.85)',
-  border: '1px solid rgba(148, 163, 184, 0.18)',
-  borderRadius: 6,
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: '#94a3b8',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  marginBottom: 8,
-};
+function sectionTitleStyle(color: string): React.CSSProperties {
+  return {
+    fontSize: 11,
+    color,
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    marginBottom: 8,
+  };
+}

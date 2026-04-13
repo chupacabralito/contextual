@@ -7,12 +7,18 @@
 
 export { createServer } from './server.js';
 export { ContextIndex } from './indexer/ContextIndex.js';
+export { PassStore } from './passes/PassStore.js';
+export { OutcomeStore } from './outcomes/OutcomeStore.js';
 export { resolveByDepth } from './resolver/depthController.js';
-export { scaffold } from './scaffold.js';
+export { ensureFlywheelArtifacts, scaffold } from './scaffold.js';
 
 // Re-export shared types
 export type {
+  CreateOutcomeRequest,
+  CreateOutcomeResponse,
   ServerConfig,
+  OutcomeListResponse,
+  PassOutcome,
   ResolveRequest,
   ResolveResponse,
   HealthResponse,

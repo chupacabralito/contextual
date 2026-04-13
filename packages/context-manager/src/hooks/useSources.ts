@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '../api/client.js';
 import type { ContextType } from './useCorpus.js';
 
 // ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ export function useSources({ type }: UseSourcesOptions): UseSourcesReturn {
     setError(null);
 
     try {
-      const res = await fetch(`/api/corpus/${encodeURIComponent(type)}/sources`);
+      const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}/sources`);
       if (!res.ok) throw new Error(`Failed to fetch sources: ${res.status}`);
       const json: SourceListResponse = await res.json();
       setSources(json.sources);
@@ -80,7 +81,7 @@ export function useSources({ type }: UseSourcesOptions): UseSourcesReturn {
       if (!type) return;
 
       try {
-        const res = await fetch(`/api/corpus/${encodeURIComponent(type)}/sources`, {
+        const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}/sources`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content, label, filename }),
@@ -102,7 +103,7 @@ export function useSources({ type }: UseSourcesOptions): UseSourcesReturn {
       if (!type) return;
 
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/corpus/${encodeURIComponent(type)}/sources/${encodeURIComponent(filename)}`,
           { method: 'DELETE' }
         );

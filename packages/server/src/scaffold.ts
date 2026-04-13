@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import type { ScaffoldRequest, ScaffoldResponse, ContextType } from '@contextual/shared';
-import { DEFAULT_CONTEXT_FOLDERS } from '@contextual/shared';
+import { DEFAULT_CONTEXT_FOLDERS, DEFAULT_LEARNED_FOLDERS } from '@contextual/shared';
 
 const README_CONTENT: Record<ContextType, string> = {
   research: 'User interviews, findings, pain points, usability studies',
@@ -18,6 +18,44 @@ const README_CONTENT: Record<ContextType, string> = {
   technical: 'Architecture considerations, technical constraints, API specs',
   business: 'Business requirements, models, revenue considerations',
 };
+
+const LEARNED_INDEX_CONTENT = `# Learned Policy
+
+This directory stores distilled operator policy derived from completed passes.
+
+- \`operator-preferences/\` captures durable approval patterns and stylistic preferences.
+- \`ui-patterns/\` stores reusable UI decisions that should inform future passes.
+- \`tool-routing/\` records which tools or data sources should be used for specific work.
+- \`project-decisions/\` stores project-specific decisions that should survive chat history.
+`;
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureFlywheelArtifacts(projectPath: string): Promise<void> {
+  await fs.mkdir(path.join(projectPath, 'passes'), { recursive: true });
+  await fs.mkdir(path.join(projectPath, 'outcomes'), { recursive: true });
+
+  const learnedDir = path.join(projectPath, 'learned');
+  await fs.mkdir(learnedDir, { recursive: true });
+
+  await Promise.all(
+    DEFAULT_LEARNED_FOLDERS.map((folder) =>
+      fs.mkdir(path.join(learnedDir, folder), { recursive: true })
+    )
+  );
+
+  const learnedIndexPath = path.join(learnedDir, 'INDEX.md');
+  if (!(await exists(learnedIndexPath))) {
+    await fs.writeFile(learnedIndexPath, LEARNED_INDEX_CONTENT, 'utf8');
+  }
+}
 
 /**
  * Scaffold a new project with the standard context folder structure.
@@ -58,8 +96,7 @@ export async function scaffold(request: ScaffoldRequest): Promise<ScaffoldRespon
       })
     );
 
-    // Create /passes folder for pass persistence
-    await fs.mkdir(path.join(projectPath, 'passes'));
+    await ensureFlywheelArtifacts(projectPath);
 
     // Create empty tools.json for tool configuration
     await fs.writeFile(

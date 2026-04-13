@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '../api/client.js';
 import type { ContextType, CompiledFileMeta } from './useCorpus.js';
 
 // ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ export function useCompiledFile({ type }: UseCompiledFileOptions): UseCompiledFi
     setError(null);
 
     try {
-      const res = await fetch(`/api/corpus/${encodeURIComponent(type)}`);
+      const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}`);
       if (res.status === 404) {
         // No compiled file yet -- not an error, just empty
         setMeta(null);
@@ -83,7 +84,7 @@ export function useCompiledFile({ type }: UseCompiledFileOptions): UseCompiledFi
       if (!type) return;
 
       try {
-        const res = await fetch(`/api/corpus/${encodeURIComponent(type)}/compiled`, {
+        const res = await apiFetch(`/api/corpus/${encodeURIComponent(type)}/compiled`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: newContent }),

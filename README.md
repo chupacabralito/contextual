@@ -1,42 +1,107 @@
 # contextual
 
-**Operating system for context-aware AI design**
+**Local-first context and pass memory for repo-native agents.**
 
-Contextual gives AI design agents the context behind the pixels. It helps designers organize research, taste, strategy, stakeholder input, and design-system knowledge before the first prototype, then guide refinement with structured annotation passes and agent actions.
+Contextual is a local tool for people who work in Claude Code and want a repo-native place to keep context, capture UI passes, and record outcomes over time.
 
-Instead of prompting from zero every time, Contextual makes project knowledge persistent, reusable, and legible to agents. The result is better first outputs, fewer iteration loops, and a growing record of how design decisions were made.
+## Status
+
+This repo is ready for a **GitHub alpha**, not a broad public release.
+
+Current alpha assumptions:
+- macOS
+- Terminal.app
+- Claude Code
+- Node 20+
+
+Pairing and auto-dispatch currently target Terminal.app only.
 
 ## What It Does
 
-- Organizes project context before the first prototype through a browser-based context manager
-- Lets designers annotate prototypes with structured instructions and `@source[instruction]` actions
-- Persists local context, pass history, and supporting artifacts so project knowledge compounds over time
-- Supports a local-first workflow built for AI-assisted design iteration
+- **Context manager** for briefs, source material, passes, outcomes, and learned notes
+- **Local context server** for indexing, pass persistence, outcomes, and pairing status
+- **React toolbar** for in-browser pass capture on apps that expose a browser UI
 
-## Repository
+The browser toolbar is optional. The core workflow is still: context manager + Claude Code + repo-local artifacts.
 
-- `packages/shared` — shared types and contracts
-- `packages/server` — local context server for indexing, search, and prompt support
-- `packages/react` — annotation component for in-browser refinement
-- `packages/context-manager` — browser app for setup, imports, and handoff creation
-- `packages/demo` — local sandbox for trying the flows end-to-end
+## Alpha Quick Start
 
-## Current Status
-
-This repo is under active development. The monorepo foundation, local context server, context manager app, and annotation component are in place, with current work focused on the Gate 1 Instruct flow and persisted pass history.
-
-## Development
+1. Install dependencies and build the workspaces.
 
 ```bash
 npm install
 npm run build
-npm run typecheck
 ```
 
-Package-specific commands can be run with `--workspace`, for example:
+2. Create a local context root inside your repo.
 
 ```bash
-npm run dev --workspace=@contextual/context-manager
-npm run dev --workspace=@contextual/react
-npm run dev:server
+npm run contextual:scaffold -- --project-name contextual-context --base-path "$PWD"
 ```
+
+3. Start the local Contextual server against that context root.
+
+```bash
+npm run contextual:serve -- --context-root "$PWD/contextual-context" --port 4700
+```
+
+4. In a second terminal, start the context manager.
+
+```bash
+npm run dev:context-manager
+```
+
+5. In the Terminal.app tab where Claude Code is running for this repo, pair that tab with the same context root.
+
+```bash
+npm run contextual:pair -- --context-root "$PWD/contextual-context"
+```
+
+6. Open the context manager, fill out the brief, add source material, and start working.
+
+Optional:
+- If your repo has a browser UI, open that app locally and use the Contextual toolbar there to create passes visually.
+
+## Daily Workflow
+
+1. Open the repo in Claude Code.
+2. Start the Contextual server.
+3. Start the context manager.
+4. Pair the Claude Code terminal tab.
+5. Update the brief and add source material.
+6. If there is a browser UI, make passes there.
+7. Review outcomes and keep the repo-local context healthy.
+
+## Root Scripts
+
+```bash
+npm run build
+npm run build:server
+npm run dev:server
+npm run dev:context-manager
+npm run contextual:scaffold -- --project-name contextual-context --base-path "$PWD"
+npm run contextual:serve -- --context-root "$PWD/contextual-context" --port 4700
+npm run contextual:pair -- --context-root "$PWD/contextual-context"
+npm run contextual:pair-status -- --context-root "$PWD/contextual-context"
+npm run contextual:record-outcome -- --context-root "$PWD/contextual-context" --pass-id <pass-id> --status approved
+npm run test:server
+```
+
+## Repository
+
+- `packages/shared` shared contracts
+- `packages/server` local server and CLI
+- `packages/react` toolbar package
+- `packages/context-manager` context manager app
+- `packages/demo` local sandbox
+
+## Known Limits
+
+- pairing supports Terminal.app only
+- setup is still developer-oriented
+- there is not yet a single `contextual start` command
+- browser integration is optional and depends on your app exposing a local browser UI
+
+## Strategy
+
+See [docs/PRODUCT-STRATEGY.md](docs/PRODUCT-STRATEGY.md) for the current product thesis.

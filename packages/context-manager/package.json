@@ -11,6 +11,8 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@contextual/react": "*",
+    "@contextual/shared": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

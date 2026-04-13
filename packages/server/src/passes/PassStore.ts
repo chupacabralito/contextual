@@ -17,10 +17,76 @@ import type {
   PreAttachedSnippet,
   InspectPassReference,
 } from '@contextual/shared';
+import { normalizePassBase } from '../normalize.js';
 
 /** Sanitize an ISO timestamp for use in filenames (replace colons with dashes) */
 function toFilenameSafe(isoTimestamp: string): string {
   return isoTimestamp.replace(/:/g, '-');
+}
+
+/**
+ * Strip :nth-child(...) pseudo-selectors from a CSS selector string.
+ * Used for fuzzy matching when the DOM position may have shifted.
+ */
+function stripNthChild(selector: string): string {
+  return selector.replace(/:nth-child\(\d+\)/g, '');
+}
+
+/**
+ * Parse a simple CSS selector into tag and class parts.
+ * E.g. "div.foo.bar:nth-child(2)" → { tag: "div", classes: ["foo", "bar"] }
+ */
+function parseSelector(selector: string): { tag: string; classes: string[] } {
+  const stripped = stripNthChild(selector);
+  // Handle ID selectors — these are exact matches only
+  if (stripped.startsWith('#')) return { tag: stripped, classes: [] };
+
+  const dotIndex = stripped.indexOf('.');
+  if (dotIndex === -1) return { tag: stripped, classes: [] };
+
+  const tag = stripped.slice(0, dotIndex);
+  const classes = stripped.slice(dotIndex + 1).split('.').filter(Boolean);
+  return { tag, classes };
+}
+
+/**
+ * Compare two CSS selectors with tolerance for positional and class differences.
+ * Matching strategy (in order of strictness):
+ *   1. Exact string match (cheapest)
+ *   2. Both selectors stripped of :nth-child() match each other
+ *      (same tag + classes, different sibling position)
+ *   3. Same tag and at least one class in common (handles class drift
+ *      when the DOM structure has been modified between passes)
+ */
+function selectorsMatch(stored: string, query: string): boolean {
+  if (stored === query) return true;
+
+  const strippedStored = stripNthChild(stored);
+  const strippedQuery = stripNthChild(query);
+  if (strippedStored === strippedQuery) return true;
+
+  // Parse into tag + classes and check for partial overlap
+  const s = parseSelector(stored);
+  const q = parseSelector(query);
+
+  // Tags must match
+  if (s.tag !== q.tag) return false;
+
+  // If either has no classes, tag-only match is too loose — skip
+  if (s.classes.length === 0 || q.classes.length === 0) return false;
+
+  // Check for exact class overlap first
+  if (s.classes.some((cls) => q.classes.includes(cls))) return true;
+
+  // Check for prefix-based overlap (BEM-style: "paste-zone" matches "paste-zone-inline")
+  // A class is considered a prefix match if one is a prefix of the other followed by a hyphen
+  return s.classes.some((sCls) =>
+    q.classes.some(
+      (qCls) =>
+        (sCls.length >= 3 && qCls.startsWith(sCls + '-')) ||
+        (qCls.length >= 3 && sCls.startsWith(qCls + '-'))
+    )
+  );
 }
 
 /** Check if a value looks like a valid Pass object */
@@ -30,10 +96,13 @@ function isPass(value: unknown): value is Pass {
   return (
     typeof p.id === 'string' &&
     typeof p.timestamp === 'string' &&
-    typeof p.depth === 'string' &&
+    (p.depth === undefined || typeof p.depth === 'string') &&
     Array.isArray(p.instructions)
   );
 }
+
+/** Alias the shared base normalizer for local use */
+const normalizePass = normalizePassBase;
 
 /**
  * Manages pass record persistence in the /passes folder.
@@ -59,10 +128,12 @@ export class PassStore {
   async createPass(pass: Pass): Promise<string> {
     await this.initialize();
 
-    const filename = `pass-${toFilenameSafe(pass.timestamp)}.json`;
+    const normalizedPass = normalizePass(pass);
+
+    const filename = `pass-${toFilenameSafe(normalizedPass.timestamp)}.json`;
     const filePath = path.join(this.passesDir, filename);
 
-    await fs.writeFile(filePath, JSON.stringify(pass, null, 2), 'utf8');
+    await fs.writeFile(filePath, JSON.stringify(normalizedPass, null, 2), 'utf8');
 
     return filePath;
   }
@@ -94,7 +165,10 @@ export class PassStore {
     return passes.map((pass) => ({
       id: pass.id,
       timestamp: pass.timestamp,
+      project: pass.project,
       depth: pass.depth,
+      affectedContextTypes: pass.affectedContextTypes,
+      loadedContextPaths: pass.loadedContextPaths,
       instructionCount: pass.instructions.length,
       elementLabels: pass.instructions.map((i) => i.element.label),
     }));
@@ -110,12 +184,48 @@ export class PassStore {
 
     for (const pass of passes) {
       for (const instruction of pass.instructions) {
-        if (instruction.element.selector === selector) {
+        if (selectorsMatch(instruction.element.selector, selector)) {
           references.push({
             passId: pass.id,
             timestamp: pass.timestamp,
             instruction,
           });
+        }
+      }
+    }
+
+    return references;
+  }
+
+  /**
+   * Find passes that targeted any of the given ancestor selectors.
+   * Returns references with inheritedFrom set to the matched ancestor selector.
+   * Excludes any passes already found by direct matching (via excludePassIds).
+   */
+  async getInheritedPasses(
+    ancestorSelectors: string[],
+    excludePassIds: Set<string>,
+  ): Promise<InspectPassReference[]> {
+    const passes = await this.listPasses();
+    const references: InspectPassReference[] = [];
+    const seen = new Set<string>();
+
+    for (const ancestor of ancestorSelectors) {
+      for (const pass of passes) {
+        for (const instruction of pass.instructions) {
+          const key = `${pass.id}:${instruction.element.selector}`;
+          if (seen.has(key)) continue;
+          if (excludePassIds.has(pass.id)) continue;
+
+          if (selectorsMatch(instruction.element.selector, ancestor)) {
+            seen.add(key);
+            references.push({
+              passId: pass.id,
+              timestamp: pass.timestamp,
+              instruction,
+              inheritedFrom: instruction.element.label || ancestor,
+            });
+          }
         }
       }
     }
@@ -134,7 +244,7 @@ export class PassStore {
 
     for (const pass of passes) {
       for (const instruction of pass.instructions) {
-        if (instruction.element.selector === selector) {
+        if (selectorsMatch(instruction.element.selector, selector)) {
           for (const snippet of instruction.preAttachedContext) {
             // Deduplicate by type+query+source
             const key = `${snippet.type}:${snippet.query}:${snippet.source}`;
@@ -174,7 +284,7 @@ export class PassStore {
         const parsed: unknown = JSON.parse(raw);
 
         if (isPass(parsed)) {
-          passes.push(parsed);
+          passes.push(normalizePass(parsed));
         } else {
           console.warn(`[PassStore] Skipping invalid pass file: ${filename}`);
         }

@@ -1,4 +1,5 @@
 import type { ContextType, ImportRequest, ImportResponse } from '../types.js';
+import { apiFetch } from './client.js';
 
 /** Bulk import sources from another context root */
 export async function importFromProject(
@@ -6,7 +7,7 @@ export async function importFromProject(
   types: ContextType[]
 ): Promise<ImportResponse> {
   const req: ImportRequest = { sourcePath, types };
-  const res = await fetch('/api/corpus/import', {
+  const res = await apiFetch('/api/corpus/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
