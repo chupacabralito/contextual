@@ -231,6 +231,7 @@ export interface ProjectSummary {
   lastActivityAt: string;
   passCount: number;
   outcomeCount?: number;
+  activeTypes: ContextType[];
 }
 
 /** Response for GET /api/projects */

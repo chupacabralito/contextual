@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm run build --workspace=@contextual/shared && npm run build --workspace=@contextual/react",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "pretypecheck": "npm run build --workspace=@contextual/shared && npm run build --workspace=@contextual/react",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },

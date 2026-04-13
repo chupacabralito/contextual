@@ -9,10 +9,12 @@
     "contextual-server": "./dist/cli.js"
   },
   "scripts": {
+    "prebuild": "npm run build --workspace=@contextual/shared",
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "test": "npm run build && node --test test/**/*.test.mjs",
+    "pretypecheck": "npm run build --workspace=@contextual/shared",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },

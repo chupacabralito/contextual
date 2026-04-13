@@ -39,6 +39,12 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 export async function ensureFlywheelArtifacts(projectPath: string): Promise<void> {
+  await Promise.all(
+    DEFAULT_CONTEXT_FOLDERS.map((folder) =>
+      fs.mkdir(path.join(projectPath, folder), { recursive: true })
+    )
+  );
+
   await fs.mkdir(path.join(projectPath, 'passes'), { recursive: true });
   await fs.mkdir(path.join(projectPath, 'outcomes'), { recursive: true });
 

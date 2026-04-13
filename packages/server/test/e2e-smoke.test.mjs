@@ -95,21 +95,26 @@ test('e2e: full pass lifecycle (add source → compile → resolve → pass → 
   assert.equal(researchEntry.exists, true);
   assert.equal(researchEntry.sourceCount, 1);
 
-  // Wait for chokidar file watcher to detect and index the new compiled.md
-  // (stabilityThreshold: 150ms + poll + processing overhead)
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  // Step 5: Resolve an @research mention. Poll briefly so the test does not
+  // rely on a fixed chokidar timing threshold.
+  let resolved;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const resolveRes = await request(baseUrl, 'POST', '/resolve', {
+      mentions: [{ type: 'research', query: 'checkout friction' }],
+      depth: 'standard',
+    });
+    assert.equal(resolveRes.status, 200);
+    resolved = await resolveRes.json();
+    if (resolved.results[0]?.matches.length) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
 
-  // Step 5: Resolve an @research mention
-  const resolveRes = await request(baseUrl, 'POST', '/resolve', {
-    mentions: [{ type: 'research', query: 'checkout friction' }],
-    depth: 'standard',
-  });
-  assert.equal(resolveRes.status, 200);
-  const resolved = await resolveRes.json();
+  assert.ok(resolved, 'resolve response should be present');
   assert.equal(resolved.results.length, 1);
   assert.equal(resolved.results[0].type, 'research');
   assert.equal(resolved.results[0].query, 'checkout friction');
-  // Should find at least one match
   assert.ok(resolved.results[0].matches.length >= 1, 'should have at least one match');
 
   // Step 6: Submit a pass
@@ -249,7 +254,9 @@ test('e2e: project lifecycle (create → list → detail)', async (t) => {
   const listRes = await request(baseUrl, 'GET', '/api/projects');
   assert.equal(listRes.status, 200);
   const list = await listRes.json();
-  assert.ok(list.projects.some((p) => p.name === 'checkout-redesign'));
+  const listedProject = list.projects.find((p) => p.name === 'checkout-redesign');
+  assert.ok(listedProject);
+  assert.deepEqual(listedProject.activeTypes, ['research', 'design-system']);
 
   // Get project detail
   const detailRes = await request(baseUrl, 'GET', '/api/projects/checkout-redesign');

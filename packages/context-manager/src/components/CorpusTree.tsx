@@ -189,6 +189,10 @@ export function CorpusTree({
           const isExpanded = expandedProjects.has(project.name);
           const isProjectScope = selection?.scope === project.name;
           const isProjectBrief = isProjectScope && !selection?.category;
+          const projectTypes =
+            project.activeTypes.length > 0
+              ? project.activeTypes
+              : types.filter((entry) => entry.exists).map((entry) => entry.type);
 
           return (
             <div key={project.name} className="tree-project">
@@ -213,19 +217,17 @@ export function CorpusTree({
 
               {isExpanded && (
                 <div className="tree-children">
-                  {/* For now, show the product-level categories as placeholders.
-                      In the future, these would be fetched per-project. */}
-                  {types.filter((t) => t.exists).map((entry) => {
-                    const isSelected = isProjectScope && selection?.category === entry.type;
+                  {projectTypes.map((type) => {
+                    const isSelected = isProjectScope && selection?.category === type;
                     return (
                       <button
-                        key={entry.type}
+                        key={type}
                         type="button"
                         className={`tree-category tree-project-category ${isSelected ? 'selected' : ''}`}
-                        onClick={() => handleProjectCategoryClick(project.name, entry.type)}
+                        onClick={() => handleProjectCategoryClick(project.name, type)}
                       >
                         <div className="tree-category-top">
-                          <span className="tree-category-name">{TYPE_LABELS[entry.type]}</span>
+                          <span className="tree-category-name">{TYPE_LABELS[type]}</span>
                         </div>
                       </button>
                     );

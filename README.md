@@ -6,9 +6,9 @@ Contextual is a local tool for people who work in Claude Code and want a repo-na
 
 ## Status
 
-This repo is ready for a **GitHub alpha**, not a broad public release.
+This repo is in **public alpha**.
 
-Current alpha assumptions:
+Current alpha support:
 - macOS
 - Terminal.app
 - Claude Code
@@ -62,6 +62,15 @@ npm run contextual:pair -- --context-root "$PWD/contextual-context"
 Optional:
 - If your repo has a browser UI, open that app locally and use the Contextual toolbar there to create passes visually.
 
+### Keep Private Material Outside This Repo
+
+For public alpha use, keep your personal strategy, research, notes, and local Contextual artifacts in a separate private folder or private repository, then point Contextual at that location:
+
+```bash
+npm run contextual:serve -- --context-root "/path/to/your-private-context"
+npm run contextual:pair -- --context-root "/path/to/your-private-context"
+```
+
 ## Daily Workflow
 
 1. Open the repo in Claude Code.
@@ -101,7 +110,3 @@ npm run test:server
 - setup is still developer-oriented
 - there is not yet a single `contextual start` command
 - browser integration is optional and depends on your app exposing a local browser UI
-
-## Strategy
-
-Contextual is a local-first context management layer for repo-native AI agents. It gives designers and product teams a way to maintain structured context alongside their codebase, so agent-driven workflows can reference real research, strategy, and design decisions.

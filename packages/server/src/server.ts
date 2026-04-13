@@ -1088,6 +1088,7 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
             lastActivityAt,
             passCount: allPasses.length,
             outcomeCount: allOutcomes.length,
+            activeTypes: brief.activeTypes,
         } satisfies ProjectSummary;
         })
     );

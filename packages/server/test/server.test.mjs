@@ -487,6 +487,7 @@ test('POST /api/projects creates a project', async () => {
         name: 'my-project',
         title: 'My Test Project',
         description: 'A test project',
+        activeTypes: ['research', 'design-system'],
       }),
     });
     assert.equal(status, 201);
@@ -496,7 +497,9 @@ test('POST /api/projects creates a project', async () => {
     // List projects
     const listRes = await fetchJSON(baseUrl, '/api/projects');
     assert.equal(listRes.status, 200);
-    assert.ok(listRes.body.projects.some((p) => p.name === 'my-project'));
+    const listedProject = listRes.body.projects.find((p) => p.name === 'my-project');
+    assert.ok(listedProject);
+    assert.deepEqual(listedProject.activeTypes, ['research', 'design-system']);
   } finally {
     await server.stop();
     await fs.rm(root, { recursive: true, force: true });
