@@ -2,7 +2,7 @@
 
 **Local-first context and pass memory for repo-native agents.**
 
-Contextual is a local tool for people who work in Claude Code and want a repo-native place to keep context, capture UI passes, and record outcomes over time.
+Contextual is a local tool for people who work in terminal (Claude Code/Codex) and want a repo-native place to keep context, capture UI passes, and record outcomes over time.
 
 ## Status
 
