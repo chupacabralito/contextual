@@ -325,8 +325,27 @@ async function runDev(): Promise<void> {
   }
 }
 
+function deriveProjectName(contextRoot: string): string {
+  // If the context root ends with .contextual, use the parent directory name
+  const base = path.basename(contextRoot);
+  const dirName = base === '.contextual' ? path.basename(path.dirname(contextRoot)) : base;
+
+  // Convert kebab-case / snake_case to Title Case
+  return dirName
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+async function runServe(): Promise<void> {
+  await runHttpServer({ serveUi: false });
+}
+
+async function runStart(): Promise<void> {
+  await runHttpServer({ serveUi: true });
+}
+
 async function runHttpServer(options: { serveUi: boolean }): Promise<void> {
-  const { contextRoot, source } = await resolveContextRoot({
+  const { contextRoot } = await resolveContextRoot({
     explicitContextRoot: getArg('context-root'),
   });
   const config = {
@@ -366,25 +385,6 @@ async function runHttpServer(options: { serveUi: boolean }): Promise<void> {
   process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
-}
-
-function deriveProjectName(contextRoot: string): string {
-  // If the context root ends with .contextual, use the parent directory name
-  const base = path.basename(contextRoot);
-  const dirName = base === '.contextual' ? path.basename(path.dirname(contextRoot)) : base;
-
-  // Convert kebab-case / snake_case to Title Case
-  return dirName
-    .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-async function runServe(): Promise<void> {
-  await runHttpServer({ serveUi: false });
-}
-
-async function runStart(): Promise<void> {
-  await runHttpServer({ serveUi: true });
 }
 
 async function runInit(): Promise<void> {

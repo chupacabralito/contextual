@@ -9,8 +9,9 @@
     "contextual-server": "./dist/cli.js"
   },
   "scripts": {
-    "prebuild": "npm run build --workspace=@contextual/shared",
+    "prebuild": "npm run build --workspace=@contextual/shared && npm run build --workspace=@contextual/context-manager",
     "build": "tsc",
+    "postbuild": "node ../../scripts/copy-context-manager-dist.mjs",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "test": "npm run build && node --test test/**/*.test.mjs",

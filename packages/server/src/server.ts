@@ -11,6 +11,7 @@ import { exec } from 'node:child_process';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 import cors from 'cors';
 import express from 'express';
@@ -115,6 +116,11 @@ interface ProjectOutcomeRecord {
   writebackCount: number;
 }
 
+interface CreateServerOptions extends Partial<ServerConfig> {
+  serveUi?: boolean;
+  uiDir?: string;
+}
+
 const VALID_RESOLUTION_DEPTHS: Set<string> = new Set([
   'light', 'standard', 'detailed', 'full',
 ]);
@@ -143,6 +149,42 @@ function isScaffoldRequest(value: unknown): value is ScaffoldRequest {
   return (
     typeof request.projectName === 'string' &&
     typeof request.basePath === 'string'
+  );
+}
+
+function getDefaultUiDir(): string {
+  const serverDistDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.join(serverDistDir, 'context-manager');
+}
+
+function injectRuntimeApiBase(html: string): string {
+  const runtimeScript = [
+    '<script>',
+    'window.__CONTEXTUAL_SERVER_URL__ = window.location.origin;',
+    '</script>',
+  ].join('');
+
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `  ${runtimeScript}\n</head>`);
+  }
+
+  return `${runtimeScript}\n${html}`;
+}
+
+function isReservedServerPath(requestPath: string): boolean {
+  const reservedPrefixes = [
+    '/api',
+    '/passes',
+    '/outcomes',
+    '/resolve',
+    '/suggest',
+    '/inspect',
+    '/tools',
+    '/health',
+  ];
+
+  return reservedPrefixes.some(
+    (prefix) => requestPath === prefix || requestPath.startsWith(`${prefix}/`)
   );
 }
 
@@ -310,24 +352,28 @@ async function dispatchToAgent(text: string, contextRoot: string): Promise<void>
 /**
  * Create and configure the context server.
  */
-export function createServer(configInput: Partial<ServerConfig> = {}): ContextualServer {
+export function createServer(configInput: CreateServerOptions = {}): ContextualServer {
   const config: ServerConfig = {
     port: configInput.port ?? DEFAULT_SERVER_PORT,
     contextRoot: configInput.contextRoot ?? process.cwd(),
     projectName: configInput.projectName ?? 'default',
   };
+  const serveUi = configInput.serveUi === true;
+  const uiDir = path.resolve(configInput.uiDir ?? getDefaultUiDir());
 
   const app = express();
   const index = new ContextIndex(config.contextRoot);
   const passStore = new PassStore(config.contextRoot);
   const outcomeStore = new OutcomeStore(config.contextRoot);
   const toolStore = new ToolStore(config.contextRoot);
+  const uiIndexPath = path.join(uiDir, 'index.html');
   const ready = Promise.all([
     index.ready(),
     passStore.initialize(),
     outcomeStore.initialize(),
     toolStore.initialize(),
     ensureFlywheelArtifacts(config.contextRoot),
+    serveUi ? fs.access(uiIndexPath) : Promise.resolve(),
   ]).then(() => {}).catch((error) => {
     console.error('[contextual-server] Initialization failed:', error);
     throw error;
@@ -2178,6 +2224,42 @@ export function createServer(configInput: Partial<ServerConfig> = {}): Contextua
       res.status(500).json({ error: 'Failed to update tools' });
     }
   });
+
+  if (serveUi) {
+    let cachedUiIndexHtml: string | null = null;
+
+    const loadUiIndexHtml = async (): Promise<string> => {
+      if (cachedUiIndexHtml !== null) {
+        return cachedUiIndexHtml;
+      }
+
+      const html = await fs.readFile(uiIndexPath, 'utf8');
+      cachedUiIndexHtml = injectRuntimeApiBase(html);
+      return cachedUiIndexHtml;
+    };
+
+    app.use(express.static(uiDir, { index: false }));
+
+    app.get(/^\/(.*)$/, async (req, res, next) => {
+      if (req.method !== 'GET') {
+        next();
+        return;
+      }
+
+      if (isReservedServerPath(req.path) || path.extname(req.path)) {
+        next();
+        return;
+      }
+
+      try {
+        const html = await loadUiIndexHtml();
+        res.type('html').send(html);
+      } catch (error) {
+        console.error('Context manager UI unavailable:', error);
+        res.status(500).send('Context manager UI is not available. Rebuild the server package.');
+      }
+    });
+  }
 
   return {
     app,

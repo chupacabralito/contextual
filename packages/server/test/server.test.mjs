@@ -59,11 +59,12 @@ async function setupContextRoot() {
   return root;
 }
 
-async function startTestServer(contextRoot) {
+async function startTestServer(contextRoot, options = {}) {
   const server = createServer({
     port: 0, // Ephemeral port
     contextRoot,
     projectName: 'test-project',
+    ...options,
   });
 
   const httpServer = await server.start();
@@ -97,6 +98,45 @@ test('GET /health returns ok with indexed file count', async () => {
     assert.equal(body.project, 'test-project');
     assert.ok(body.indexedFiles >= 1);
     assert.ok(Array.isArray(body.availableTypes));
+  } finally {
+    await server.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('start mode serves the packaged context manager UI and preserves API routes', async () => {
+  const root = await setupContextRoot();
+  const uiDir = path.join(root, 'ui-dist');
+  await fs.mkdir(path.join(uiDir, 'assets'), { recursive: true });
+  await fs.writeFile(
+    path.join(uiDir, 'index.html'),
+    '<!doctype html><html><head><title>Context Manager</title></head><body><div id="root">Context Manager</div></body></html>',
+    'utf8'
+  );
+  await fs.writeFile(path.join(uiDir, 'assets', 'main.js'), 'console.log("ui");', 'utf8');
+
+  const { server, baseUrl } = await startTestServer(root, { serveUi: true, uiDir });
+
+  try {
+    const htmlRes = await fetch(`${baseUrl}/`);
+    const html = await htmlRes.text();
+    assert.equal(htmlRes.status, 200);
+    assert.match(html, /Context Manager/);
+    assert.match(html, /window\.__CONTEXTUAL_SERVER_URL__ = window\.location\.origin/);
+
+    const routeRes = await fetch(`${baseUrl}/projects/demo`);
+    const routeHtml = await routeRes.text();
+    assert.equal(routeRes.status, 200);
+    assert.match(routeHtml, /Context Manager/);
+
+    const assetRes = await fetch(`${baseUrl}/assets/main.js`);
+    const assetBody = await assetRes.text();
+    assert.equal(assetRes.status, 200);
+    assert.equal(assetBody, 'console.log("ui");');
+
+    const { status, body } = await fetchJSON(baseUrl, '/health');
+    assert.equal(status, 200);
+    assert.equal(body.status, 'ok');
   } finally {
     await server.stop();
     await fs.rm(root, { recursive: true, force: true });
