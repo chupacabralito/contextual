@@ -236,8 +236,8 @@ function injectIntoNextLayout(
 
 /** Default semver ranges for Contextual packages */
 const DEFAULT_PACKAGE_VERSIONS = {
-  react: '^0.0.1',
-  shared: '^0.0.1',
+  react: '^0.1.0',
+  shared: '^0.1.0',
 };
 
 /**
