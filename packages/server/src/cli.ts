@@ -6,6 +6,7 @@
 //   contextual-server init                              # from your project dir
 //   contextual-server dev                               # from your project dir
 //   contextual-server [serve] --context-root ./my-project --port 4700
+//   contextual-server start --context-root ./my-project --port 4700
 //   contextual-server scaffold --project-name contextual-context --base-path .
 //   contextual-server pair --context-root ./my-project
 //   contextual-server pair-status --context-root ./my-project
@@ -30,6 +31,7 @@ import { PassStore } from './passes/PassStore.js';
 import { OutcomeStore } from './outcomes/OutcomeStore.js';
 import { scaffold } from './scaffold.js';
 import { init } from './init.js';
+import { resolveContextRoot } from './config.js';
 
 const rawArgs = process.argv.slice(2);
 const command = rawArgs[0] && !rawArgs[0]!.startsWith('--') ? rawArgs[0]! : 'serve';
@@ -205,7 +207,9 @@ async function detectCurrentTty(): Promise<string> {
 }
 
 async function runPair(): Promise<void> {
-  const contextRoot = path.resolve(getArg('context-root') ?? process.cwd());
+  const { contextRoot, source } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
   await ensureContextRootExists(contextRoot);
 
   const termProgram = getArg('term-program') ?? process.env.TERM_PROGRAM ?? '';
@@ -223,30 +227,54 @@ async function runPair(): Promise<void> {
     workingDirectory: process.cwd(),
   });
 
-  console.log(
-    JSON.stringify(
-      {
-        paired: true,
-        path: pairingStore.getPairingPath(),
-        pairing,
-      },
-      null,
-      2,
-    ),
-  );
+  // Validate the server can see this pairing
+  const port = parseInt(getArg('port') ?? String(DEFAULT_SERVER_PORT), 10);
+  let serverReachable = false;
+  try {
+    const res = await fetch(`http://localhost:${port}/health`);
+    serverReachable = res.ok;
+  } catch {
+    // server not running
+  }
+
+  console.log('');
+  console.log(`  Paired to: ${contextRoot}`);
+  console.log(`  TTY:       ${pairing.tty}`);
+  console.log(`  File:      ${pairingStore.getPairingPath()}`);
+  console.log(`  Resolved via: ${source}`);
+  if (!serverReachable) {
+    console.log('');
+    console.log(`  Warning: Contextual server not reachable at localhost:${port}.`);
+    console.log(`  Run \`contextual-server start\` first, then pair.`);
+  }
+  console.log('');
 }
 
 async function runPairStatus(): Promise<void> {
-  const contextRoot = path.resolve(getArg('context-root') ?? process.cwd());
+  const { contextRoot } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
   await ensureContextRootExists(contextRoot);
 
   const pairingStore = new PairingStore(contextRoot);
   const pairing = await pairingStore.getPairing();
 
+  // Check if the paired TTY is still alive
+  let ttyAlive = false;
+  if (pairing?.tty) {
+    try {
+      await fs.access(pairing.tty);
+      ttyAlive = true;
+    } catch {
+      // TTY no longer exists
+    }
+  }
+
   console.log(
     JSON.stringify(
       {
         paired: pairing !== null,
+        ttyAlive,
         path: pairingStore.getPairingPath(),
         pairing,
       },
@@ -257,7 +285,9 @@ async function runPairStatus(): Promise<void> {
 }
 
 async function runUnpair(): Promise<void> {
-  const contextRoot = path.resolve(getArg('context-root') ?? process.cwd());
+  const { contextRoot } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
   await ensureContextRootExists(contextRoot);
 
   const pairingStore = new PairingStore(contextRoot);
@@ -295,19 +325,10 @@ async function runDev(): Promise<void> {
   }
 }
 
-function deriveProjectName(contextRoot: string): string {
-  // If the context root ends with .contextual, use the parent directory name
-  const base = path.basename(contextRoot);
-  const dirName = base === '.contextual' ? path.basename(path.dirname(contextRoot)) : base;
-
-  // Convert kebab-case / snake_case to Title Case
-  return dirName
-    .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-async function runServe(): Promise<void> {
-  const contextRoot = path.resolve(getArg('context-root') ?? process.cwd());
+async function runHttpServer(options: { serveUi: boolean }): Promise<void> {
+  const { contextRoot, source } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
   const config = {
     port: parseInt(getArg('port') ?? String(DEFAULT_SERVER_PORT), 10),
     contextRoot,
@@ -316,11 +337,17 @@ async function runServe(): Promise<void> {
 
   await ensureContextRootExists(config.contextRoot);
 
-  const server = createServer(config);
+  const server = createServer({
+    ...config,
+    serveUi: options.serveUi,
+  });
   await server.start();
 
   const health = await server.index.getStats();
   console.log(`Indexed files: ${health.indexedFiles}`);
+  if (options.serveUi) {
+    console.log(`Context manager available at http://localhost:${config.port}`);
+  }
 
   const shutdown = async (signal: string) => {
     console.log(`\nReceived ${signal}, shutting down Contextual server...`);
@@ -341,14 +368,41 @@ async function runServe(): Promise<void> {
   });
 }
 
+function deriveProjectName(contextRoot: string): string {
+  // If the context root ends with .contextual, use the parent directory name
+  const base = path.basename(contextRoot);
+  const dirName = base === '.contextual' ? path.basename(path.dirname(contextRoot)) : base;
+
+  // Convert kebab-case / snake_case to Title Case
+  return dirName
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+async function runServe(): Promise<void> {
+  await runHttpServer({ serveUi: false });
+}
+
+async function runStart(): Promise<void> {
+  await runHttpServer({ serveUi: true });
+}
+
 async function runInit(): Promise<void> {
   const projectDir = path.resolve(getArg('project-dir') ?? process.cwd());
   const projectName = getArg('project');
 
-  // Resolve the contextual monorepo root (this CLI lives inside it)
-  // Use fileURLToPath to correctly handle spaces and special characters in paths
-  const cliDir = path.dirname(decodeURIComponent(new URL(import.meta.url).pathname));
-  const contextualRoot = path.resolve(cliDir, '..', '..', '..');
+  // Optionally resolve the contextual monorepo root for contributor dev.
+  // When running as a published package, this isn't needed.
+  let contextualRoot: string | undefined;
+  try {
+    const cliDir = path.dirname(decodeURIComponent(new URL(import.meta.url).pathname));
+    const candidate = path.resolve(cliDir, '..', '..', '..');
+    const monorepoMarker = path.join(candidate, 'packages', 'server', 'package.json');
+    await fs.access(monorepoMarker);
+    contextualRoot = candidate;
+  } catch {
+    // Not running from monorepo — that's fine
+  }
 
   const result = await init({
     projectDir,
@@ -369,11 +423,11 @@ async function runInit(): Promise<void> {
   if (result.depsAdded) {
     console.log('  Next steps:');
     console.log(`    1. Run \`npm install\``);
-    console.log(`    2. Start everything:`);
-    console.log(`       contextual-server dev`);
+    console.log(`    2. Start Contextual:`);
+    console.log(`       contextual-server start`);
   } else {
-    console.log('  Start everything:');
-    console.log(`    contextual-server dev`);
+    console.log('  Start Contextual:');
+    console.log(`    contextual-server start`);
   }
   console.log('');
 }
@@ -395,7 +449,9 @@ async function runScaffold(): Promise<void> {
 }
 
 async function runRecordOutcome(): Promise<void> {
-  const contextRoot = path.resolve(getArg('context-root') ?? process.cwd());
+  const { contextRoot } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
   const passId = getArg('pass-id');
   const status = parseOutcomeStatus(getArg('status') ?? 'approved');
 
@@ -477,6 +533,9 @@ async function main(): Promise<void> {
       return;
     case 'serve':
       await runServe();
+      return;
+    case 'start':
+      await runStart();
       return;
     case 'pair':
       await runPair();

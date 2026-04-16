@@ -11,6 +11,8 @@ export { PassStore } from './passes/PassStore.js';
 export { OutcomeStore } from './outcomes/OutcomeStore.js';
 export { resolveByDepth } from './resolver/depthController.js';
 export { ensureFlywheelArtifacts, scaffold } from './scaffold.js';
+export { resolveContextRoot, readProjectConfig, writeProjectConfig } from './config.js';
+export type { ProjectConfig } from './config.js';
 
 // Re-export shared types
 export type {

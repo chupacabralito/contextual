@@ -13,6 +13,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { ensureFlywheelArtifacts } from './scaffold.js';
+import { writeProjectConfig } from './config.js';
 import { DEFAULT_CONTEXT_FOLDERS } from '@contextual/shared';
 import type { ContextType } from '@contextual/shared';
 
@@ -233,38 +234,32 @@ function injectIntoNextLayout(
 // Dependency management
 // -----------------------------------------------------------------------------
 
-/**
- * Resolve the path from the target project back to the contextual monorepo packages.
- * Returns file: protocol links for local development.
- */
-function resolveContextualDeps(
-  projectDir: string,
-  contextualRoot: string,
-): { react: string; shared: string } {
-  const reactPkg = path.relative(projectDir, path.join(contextualRoot, 'packages', 'react'));
-  const sharedPkg = path.relative(projectDir, path.join(contextualRoot, 'packages', 'shared'));
-  return {
-    react: `file:${reactPkg}`,
-    shared: `file:${sharedPkg}`,
-  };
-}
+/** Default semver ranges for Contextual packages */
+const DEFAULT_PACKAGE_VERSIONS = {
+  react: '^0.0.1',
+  shared: '^0.0.1',
+};
 
 /**
  * Add Contextual dependencies to the target project's package.json.
+ * Uses standard npm semver ranges — no monorepo-relative file: links.
  */
 async function addDependencies(
   packageJsonPath: string,
   pkg: Record<string, unknown>,
-  deps: { react: string; shared: string },
+  versions: { react: string; shared: string },
 ): Promise<boolean> {
   const existing = (pkg.dependencies ?? {}) as Record<string, string>;
 
-  if (existing['@contextual/react'] && existing['@contextual/shared']) {
-    return false; // already present
+  // If both already present and not using file: links, skip
+  const reactPresent = existing['@contextual/react'] && !existing['@contextual/react'].startsWith('file:');
+  const sharedPresent = existing['@contextual/shared'] && !existing['@contextual/shared'].startsWith('file:');
+  if (reactPresent && sharedPresent) {
+    return false;
   }
 
-  existing['@contextual/react'] = deps.react;
-  existing['@contextual/shared'] = deps.shared;
+  existing['@contextual/react'] = versions.react;
+  existing['@contextual/shared'] = versions.shared;
 
   const updated = { ...pkg, dependencies: existing };
   await fs.writeFile(packageJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
@@ -317,10 +312,12 @@ async function scaffoldContextFolder(contextRoot: string): Promise<void> {
 export interface InitOptions {
   /** Absolute path to the target project directory */
   projectDir: string;
-  /** Absolute path to the contextual monorepo root */
-  contextualRoot: string;
+  /** Optional: absolute path to the contextual monorepo root (for contributor dev only) */
+  contextualRoot?: string;
   /** Optional project name override */
   projectName?: string;
+  /** Optional explicit package versions (e.g. for local dev with file: links) */
+  packageVersions?: { react: string; shared: string };
 }
 
 export interface InitResult {
@@ -334,17 +331,19 @@ export interface InitResult {
 }
 
 export async function init(options: InitOptions): Promise<InitResult> {
-  const { projectDir, contextualRoot } = options;
+  const { projectDir } = options;
   const steps: string[] = [];
 
   // Safety: don't run init inside the contextual monorepo itself
-  const resolvedProject = path.resolve(projectDir);
-  const resolvedContextual = path.resolve(contextualRoot);
-  if (resolvedProject === resolvedContextual || resolvedProject.startsWith(resolvedContextual + path.sep)) {
-    throw new Error(
-      `Cannot init inside the contextual monorepo (${resolvedContextual}). ` +
-      `Run this from your target project directory instead.`,
-    );
+  if (options.contextualRoot) {
+    const resolvedProject = path.resolve(projectDir);
+    const resolvedContextual = path.resolve(options.contextualRoot);
+    if (resolvedProject === resolvedContextual || resolvedProject.startsWith(resolvedContextual + path.sep)) {
+      throw new Error(
+        `Cannot init inside the contextual monorepo (${resolvedContextual}). ` +
+        `Run this from your target project directory instead.`,
+      );
+    }
   }
 
   // Step 1: Detect framework
@@ -368,20 +367,33 @@ export async function init(options: InitOptions): Promise<InitResult> {
       : 'Created .contextual/ folder with 7 context types + passes/outcomes/learned',
   );
 
-  // Step 3: Add dependencies
-  const depLinks = resolveContextualDeps(projectDir, contextualRoot);
+  // Step 3: Write persisted config
+  await writeProjectConfig({
+    projectDir: path.resolve(projectDir),
+    contextRoot: path.resolve(contextRoot),
+    projectName,
+  });
+  steps.push('Wrote .contextual/config.json');
+
+  // Step 4: Add dependencies (semver by default, file: links only if explicitly provided)
+  const versions = options.packageVersions ?? DEFAULT_PACKAGE_VERSIONS;
   const depsAdded = await addDependencies(
     project.packageJsonPath,
     project.packageJson,
-    depLinks,
+    versions,
   );
-  steps.push(
-    depsAdded
-      ? 'Added @contextual/react and @contextual/shared to package.json'
-      : '@contextual/react and @contextual/shared already in package.json',
-  );
+  if (depsAdded) {
+    const usesFileLinks = versions.react.startsWith('file:');
+    steps.push(
+      usesFileLinks
+        ? 'Added @contextual/react and @contextual/shared (local file: links for development)'
+        : 'Added @contextual/react and @contextual/shared to package.json',
+    );
+  } else {
+    steps.push('@contextual/react and @contextual/shared already in package.json');
+  }
 
-  // Step 4: Generate overlay component
+  // Step 5: Generate overlay component
   let overlayPath: string | null = null;
   let layoutModified = false;
 
@@ -403,7 +415,7 @@ export async function init(options: InitOptions): Promise<InitResult> {
       steps.push(`Created ${path.relative(projectDir, overlayPath)}`);
     }
 
-    // Step 5: Inject into layout
+    // Step 6: Inject into layout
     const layoutPath = await findNextLayout(projectDir, project.usesSrcDir);
     if (layoutPath) {
       const layoutContent = await fs.readFile(layoutPath, 'utf8');

@@ -73,42 +73,68 @@ This is how context compounds over time. Each session leaves behind knowledge th
 
 ## Quick Start
 
-### 1. Install and build
+### Prerequisites
+
+Clone this repo, install, build, and link the CLI:
 
 ```bash
+git clone https://github.com/chupacabralito/contextual.git
+cd contextual
 npm install
 npm run build
+cd packages/server && npm link && cd ../..
 ```
 
-### 2. Initialize your project
+This makes the `contextual-server` command available globally.
+
+### 1. Initialize your project
 
 From your project directory:
 
 ```bash
+cd ~/my-project
 contextual-server init
 ```
 
-This detects your framework (Next.js, Vite+React), scaffolds a `.contextual/` directory, adds the toolbar dependency, and injects the overlay into your root layout. If dependencies were added, run `npm install` afterward.
+This detects your framework (Next.js, Vite+React), scaffolds a `.contextual/` directory with a persisted config, adds `@contextual/react` and `@contextual/shared` as dependencies, and injects the overlay into your root layout. If dependencies were added, run `npm install` afterward.
 
-### 3. Start everything
+### 2. Start Contextual
 
 ```bash
-contextual-server dev
+contextual-server start
 ```
 
-This single command starts the server, context manager, and all dev watchers. Open the context manager, write your brief, add source material, and begin making passes.
+This starts the API server and context manager on a single port (default: 4700). Open `http://localhost:4700` to access the context manager. The command automatically finds your `.contextual/` directory in the current working directory.
 
-### 4. Pair your Claude Code terminal tab
+### 3. Pair your Claude Code terminal tab
 
 In the Terminal.app tab where Claude Code is running:
 
 ```bash
+cd ~/my-project
 contextual-server pair
 ```
 
-### 5. Start working
+Pairing connects this specific terminal tab to your context root. When you submit a pass from the context manager or toolbar, it gets typed directly into this tab via AppleScript. The tab must stay open — if you close it, re-run `pair`.
+
+The `pair` command validates that the server is reachable and shows exactly where the pairing file is written, so you can confirm the connection.
+
+### 4. Start working
+
+Open the context manager at `http://localhost:4700`, write your brief, add source material to the context folders, and begin making passes.
 
 If your repo has a browser UI, run it locally and use the Contextual toolbar to create passes visually by pointing at elements and writing instructions.
+
+### Context root resolution
+
+All commands (`start`, `pair`, `serve`, `record-outcome`) resolve the context root in this order:
+
+1. Explicit `--context-root` flag
+2. `.contextual/config.json` in the current directory (written by `init`)
+3. `.contextual/` directory in the current directory
+4. Current working directory as fallback
+
+This means you can run `contextual-server start` or `contextual-server pair` from your project directory without any flags.
 
 ### Advanced Setup
 
@@ -118,14 +144,14 @@ If you need more control, you can run each part individually:
 # Scaffold a standalone context root (outside your project)
 contextual-server scaffold --project-name my-context --base-path "$PWD"
 
-# Start just the server
+# Start just the API server (no context manager UI)
 contextual-server serve --context-root "$PWD/my-context" --port 4700
-
-# Start the context manager separately
-npm run dev:context-manager
 
 # Pair with an explicit context root
 contextual-server pair --context-root "$PWD/my-context"
+
+# Check pairing status (includes TTY liveness check)
+contextual-server pair-status
 ```
 
 ### Keep Private Material Outside This Repo
@@ -133,17 +159,17 @@ contextual-server pair --context-root "$PWD/my-context"
 For public alpha use, keep your personal strategy, research, notes, and local Contextual artifacts in a separate private folder or private repository, then point Contextual at that location:
 
 ```bash
-contextual-server serve --context-root "/path/to/your-private-context"
+contextual-server start --context-root "/path/to/your-private-context"
 contextual-server pair --context-root "/path/to/your-private-context"
 ```
 
 ## Daily Workflow
 
-1. Open the repo in Claude Code.
-2. Run `contextual-server dev` to start everything.
-3. Pair the Claude Code terminal tab with `contextual-server pair`.
-4. Update the brief and add source material.
-5. If there is a browser UI, make passes there.
+1. `cd` into your project directory.
+2. Run `contextual-server start`.
+3. Open a new Terminal.app tab, `cd` to your project, and run `contextual-server pair`.
+4. Run `claude` in that same tab.
+5. Open `http://localhost:4700` to manage context and make passes.
 6. Review outcomes and keep the repo-local context healthy.
 
 ## Architecture
@@ -195,48 +221,41 @@ Vite + React 19 app with a two-panel layout. Left panel shows a hierarchical tre
 ## CLI Reference
 
 ```bash
-# Setup
+# Product commands
 contextual-server init [--project-dir <path>]        # Detect framework, scaffold, inject toolbar
-contextual-server scaffold --project-name <n> --base-path <p>  # Create context structure
+contextual-server start [--context-root <path>] [--port <port>]  # API server + context manager UI
+contextual-server pair [--context-root <path>]        # Connect this terminal tab for dispatch
+contextual-server pair-status [--context-root <path>] # Check pairing + TTY liveness
+contextual-server unpair [--context-root <path>]      # Disconnect paired terminal
 
-# Development
-contextual-server dev [--project-dir <path>]          # Start server, context manager, and watchers
+# Advanced
+contextual-server serve [--context-root <path>] [--port <port>]  # API server only (no UI)
+contextual-server scaffold --project-name <n> --base-path <p>    # Create standalone context structure
+contextual-server dev [--project-dir <path>]          # Monorepo contributor dev mode
 
-# Server
-contextual-server serve [--context-root <path>] [--port <port>] [--project <name>]
-
-# Pairing
-contextual-server pair [--context-root <path>] [--tty <tty>]
-contextual-server pair-status [--context-root <path>]
-contextual-server unpair [--context-root <path>]
-
-# Outcomes
+# Outcomes (usually called by the agent, not the user)
 contextual-server record-outcome --context-root <path> --pass-id <id> --status <status> \
   [--feedback <text>] [--summary <text>] [--changed-file <path>] \
   [--looks-good <instruction-id>] [--needs-another-pass <instruction-id>] \
   [--instruction-feedback <instruction-id>=<text>]
 ```
 
-## npm Scripts
+All commands that accept `--context-root` also support automatic resolution: they check for `.contextual/config.json` or a `.contextual/` directory in the current working directory before falling back.
+
+## Contributing
+
+### npm Scripts
 
 ```bash
 # Build
 npm run build                # Build all workspaces
 npm run build:server         # Build server only
 
-# Development
-npm run dev                  # Start all services
+# Development (monorepo contributors)
+npm run dev                  # Start all services via concurrently
 npm run dev:server           # Watch server TypeScript
 npm run dev:context-manager  # Vite dev server for context manager
 npm run dev:react            # Watch React toolbar package
-
-# Contextual CLI (via npm)
-npm run contextual:scaffold -- --project-name <name> --base-path <path>
-npm run contextual:serve -- --context-root <path> [--port <port>]
-npm run contextual:pair -- --context-root <path>
-npm run contextual:pair-status -- --context-root <path>
-npm run contextual:record-outcome -- --context-root <path> --pass-id <id> --status <status>
-npm run contextual:init -- [--project-dir <path>]
 
 # Testing
 npm run test                 # Test all packages
@@ -344,5 +363,5 @@ my-context/
 ## Known Limits
 
 - Pairing supports Terminal.app only (macOS).
-- Setup is still developer-oriented.
+- Not yet published to npm — requires cloning the repo and linking.
 - Browser integration is optional and depends on your app exposing a local browser UI.

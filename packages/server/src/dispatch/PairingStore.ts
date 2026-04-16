@@ -3,16 +3,17 @@ import { promises as fs } from 'node:fs';
 import type { TerminalPairing } from '@contextual/shared';
 
 export class PairingStore {
-  private readonly pairingDir: string;
   private readonly pairingPath: string;
 
   constructor(contextRoot: string) {
-    this.pairingDir = path.join(path.resolve(contextRoot), '.contextual');
-    this.pairingPath = path.join(this.pairingDir, 'terminal-pairing.json');
+    // Write terminal-pairing.json directly in the context root.
+    // The context root is already the .contextual/ directory — no extra nesting.
+    this.pairingPath = path.join(path.resolve(contextRoot), 'terminal-pairing.json');
   }
 
   async initialize(): Promise<void> {
-    await fs.mkdir(this.pairingDir, { recursive: true });
+    const dir = path.dirname(this.pairingPath);
+    await fs.mkdir(dir, { recursive: true });
   }
 
   async getPairing(): Promise<TerminalPairing | null> {
