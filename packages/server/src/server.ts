@@ -61,14 +61,14 @@ import type {
   DiscoverResponse,
   DiscoverImportRequest,
   DiscoverImportResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 import {
   CONTEXT_TYPES,
   DEFAULT_LEARNED_FOLDERS,
   DEFAULT_PRIORITIES,
   DEFAULT_SERVER_PORT,
   isContextType,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 import { PairingStore } from './dispatch/PairingStore.js';
 import { ContextIndex } from './indexer/ContextIndex.js';
 import { resolveByDepth } from './resolver/depthController.js';

@@ -13,7 +13,7 @@ import type {
   DiscoveredFile,
   DiscoverResponse,
   DiscoverImportResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 
 interface FileSelection {
   file: DiscoveredFile;

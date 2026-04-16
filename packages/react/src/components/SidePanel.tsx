@@ -15,7 +15,7 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AnnotationMode, QueuedInstruction, TargetedElement } from '@contextual/shared';
+import type { AnnotationMode, QueuedInstruction, TargetedElement } from '@contextualapp/shared';
 import type { ContextualState, ReviewDrawerState } from '../hooks/useContextual.js';
 import { InspectContent } from './InspectPanel.js';
 import { ReviewDrawer } from './ReviewDrawer.js';

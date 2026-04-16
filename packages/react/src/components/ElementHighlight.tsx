@@ -7,7 +7,7 @@
 // =============================================================================
 
 import React, { useEffect, useState } from 'react';
-import type { BoundingBox } from '@contextual/shared';
+import type { BoundingBox } from '@contextualapp/shared';
 
 interface ElementHighlightProps {
   /** Initial bounding box (used as fallback and first paint) */

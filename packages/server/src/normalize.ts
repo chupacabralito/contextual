@@ -6,7 +6,7 @@
 // - server.ts (API input normalization, which extends these with project defaults)
 // =============================================================================
 
-import type { Pass, PassOutcome } from '@contextual/shared';
+import type { Pass, PassOutcome } from '@contextualapp/shared';
 
 /**
  * Normalize a Pass record: ensure all optional arrays exist and

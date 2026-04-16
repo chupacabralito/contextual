@@ -5,7 +5,7 @@
 // Light = minimal tokens. Full = everything.
 // =============================================================================
 
-import type { ResolutionDepth, ContextMatch } from '@contextual/shared';
+import type { ResolutionDepth, ContextMatch } from '@contextualapp/shared';
 
 interface ResolveByDepthOptions {
   getRelatedFindings?: (match: ContextMatch) => Promise<string[]>;

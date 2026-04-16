@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 
-import { DEFAULT_CONTEXT_FOLDERS } from '@contextual/shared';
+import { DEFAULT_CONTEXT_FOLDERS } from '@contextualapp/shared';
 import { scaffold } from '../dist/scaffold.js';
 
 test('scaffold creates the standard context folder structure with READMEs', async () => {

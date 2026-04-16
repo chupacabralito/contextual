@@ -23,8 +23,8 @@ import type {
   OutcomeStatus,
   Pass,
   PassOutcome,
-} from '@contextual/shared';
-import { DEFAULT_SERVER_PORT } from '@contextual/shared';
+} from '@contextualapp/shared';
+import { DEFAULT_SERVER_PORT } from '@contextualapp/shared';
 import { createServer } from './server.js';
 import { PairingStore } from './dispatch/PairingStore.js';
 import { PassStore } from './passes/PassStore.js';

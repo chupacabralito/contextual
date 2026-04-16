@@ -1,7 +1,7 @@
 // =============================================================================
 // Context Manager Types
 // =============================================================================
-// Re-exports all context-manager-relevant types from @contextual/shared.
+// Re-exports all context-manager-relevant types from @contextualapp/shared.
 // The UI layer imports from this file, never directly from shared.
 // =============================================================================
 
@@ -49,10 +49,10 @@ export type {
   PassOutcome,
   RepositoryFile,
   RepositoryResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 
 export {
   CONTEXT_TYPES,
   DEFAULT_LEARNED_FOLDERS,
   DEFAULT_PRIORITIES,
-} from '@contextual/shared';
+} from '@contextualapp/shared';

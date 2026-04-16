@@ -1,5 +1,5 @@
 {
-  "name": "@contextual/react",
+  "name": "@contextualapp/react",
   "version": "0.1.0",
   "description": "React annotation component for AI-assisted design iteration with organizational context",
   "type": "module",
@@ -14,11 +14,11 @@
     "./styles.css": "./dist/styles.css"
   },
   "scripts": {
-    "prebuild": "npm run build --workspace=@contextual/shared",
+    "prebuild": "npm run build --workspace=@contextualapp/shared",
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "npm run build && node --test test/**/*.test.mjs",
-    "pretypecheck": "npm run build --workspace=@contextual/shared",
+    "pretypecheck": "npm run build --workspace=@contextualapp/shared",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
@@ -27,7 +27,7 @@
     "react-dom": ">=18.0.0"
   },
   "dependencies": {
-    "@contextual/shared": "^0.1.0"
+    "@contextualapp/shared": "^0.1.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

@@ -16,7 +16,7 @@ import type {
   Instruction,
   PreAttachedSnippet,
   InspectPassReference,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 import { normalizePassBase } from '../normalize.js';
 
 /** Sanitize an ISO timestamp for use in filenames (replace colons with dashes) */

@@ -14,8 +14,8 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { ensureFlywheelArtifacts } from './scaffold.js';
 import { writeProjectConfig } from './config.js';
-import { DEFAULT_CONTEXT_FOLDERS } from '@contextual/shared';
-import type { ContextType } from '@contextual/shared';
+import { DEFAULT_CONTEXT_FOLDERS } from '@contextualapp/shared';
+import type { ContextType } from '@contextualapp/shared';
 
 // -----------------------------------------------------------------------------
 // Framework detection
@@ -106,7 +106,7 @@ function generateOverlayComponent(projectName: string, usesTypeScript: boolean):
   const ext = usesTypeScript ? '' : ''; // content is the same, file ext differs
   return `'use client';
 
-import { ContextualProvider } from '@contextual/react';
+import { ContextualProvider } from '@contextualapp/react';
 ${usesTypeScript ? '' : '// @ts-ignore\n'}
 export function ContextualOverlay({ children }${usesTypeScript ? ': { children: React.ReactNode }' : ''}) {
   // Only render in development — zero cost in production builds
@@ -130,7 +130,7 @@ function generateViteOverlayComponent(
   projectName: string,
   usesTypeScript: boolean,
 ): string {
-  return `import { ContextualProvider } from '@contextual/react';
+  return `import { ContextualProvider } from '@contextualapp/react';
 ${usesTypeScript ? '' : '// @ts-ignore\n'}
 export function ContextualOverlay({ children }${usesTypeScript ? ': { children: React.ReactNode }' : ''}) {
   // Only render in development — zero cost in production builds
@@ -252,14 +252,14 @@ async function addDependencies(
   const existing = (pkg.dependencies ?? {}) as Record<string, string>;
 
   // If both already present and not using file: links, skip
-  const reactPresent = existing['@contextual/react'] && !existing['@contextual/react'].startsWith('file:');
-  const sharedPresent = existing['@contextual/shared'] && !existing['@contextual/shared'].startsWith('file:');
+  const reactPresent = existing['@contextualapp/react'] && !existing['@contextualapp/react'].startsWith('file:');
+  const sharedPresent = existing['@contextualapp/shared'] && !existing['@contextualapp/shared'].startsWith('file:');
   if (reactPresent && sharedPresent) {
     return false;
   }
 
-  existing['@contextual/react'] = versions.react;
-  existing['@contextual/shared'] = versions.shared;
+  existing['@contextualapp/react'] = versions.react;
+  existing['@contextualapp/shared'] = versions.shared;
 
   const updated = { ...pkg, dependencies: existing };
   await fs.writeFile(packageJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
@@ -386,11 +386,11 @@ export async function init(options: InitOptions): Promise<InitResult> {
     const usesFileLinks = versions.react.startsWith('file:');
     steps.push(
       usesFileLinks
-        ? 'Added @contextual/react and @contextual/shared (local file: links for development)'
-        : 'Added @contextual/react and @contextual/shared to package.json',
+        ? 'Added @contextualapp/react and @contextualapp/shared (local file: links for development)'
+        : 'Added @contextualapp/react and @contextualapp/shared to package.json',
     );
   } else {
-    steps.push('@contextual/react and @contextual/shared already in package.json');
+    steps.push('@contextualapp/react and @contextualapp/shared already in package.json');
   }
 
   // Step 5: Generate overlay component

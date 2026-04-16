@@ -56,7 +56,7 @@ if [[ -n "$APP_DIR" ]]; then
   APP_LABEL="$(basename "$APP_DIR")"
   APP_NAME="app"
 else
-  APP_CMD="npm run dev --workspace=@contextual/demo"
+  APP_CMD="npm run dev --workspace=@contextualapp/demo"
   APP_LABEL="demo"
   APP_NAME="demo"
 fi

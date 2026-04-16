@@ -3,7 +3,7 @@ import type {
   CreateProjectResponse,
   ProjectDetailResponse,
   ProjectListResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 import { apiFetch } from './client.js';
 
 export async function fetchProjects(): Promise<ProjectListResponse> {

@@ -96,7 +96,7 @@ cd ~/my-project
 contextual-server init
 ```
 
-This detects your framework (Next.js, Vite+React), scaffolds a `.contextual/` directory with a persisted config, adds `@contextual/react` and `@contextual/shared` as dependencies, and injects the overlay into your root layout. If dependencies were added, run `npm install` afterward.
+This detects your framework (Next.js, Vite+React), scaffolds a `.contextual/` directory with a persisted config, adds `@contextualapp/react` and `@contextualapp/shared` as dependencies, and injects the overlay into your root layout. If dependencies were added, run `npm install` afterward.
 
 ### 2. Start Contextual
 

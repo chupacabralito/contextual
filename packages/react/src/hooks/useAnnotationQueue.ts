@@ -5,7 +5,7 @@
 // =============================================================================
 
 import { useCallback, useMemo, useState } from 'react';
-import type { QueuedInstruction } from '@contextual/shared';
+import type { QueuedInstruction } from '@contextualapp/shared';
 
 export interface UseAnnotationQueueReturn {
   queue: QueuedInstruction[];

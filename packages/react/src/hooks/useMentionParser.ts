@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ParsedAction } from '@contextual/shared';
+import type { ParsedAction } from '@contextualapp/shared';
 import { parseActions } from '../mentions/parser.js';
 
 interface UseMentionParserReturn {

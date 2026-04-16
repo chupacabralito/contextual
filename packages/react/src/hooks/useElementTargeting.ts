@@ -7,7 +7,7 @@
 // =============================================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TargetedElement, SelectionMode, BoundingBox } from '@contextual/shared';
+import type { TargetedElement, SelectionMode, BoundingBox } from '@contextualapp/shared';
 
 interface UseElementTargetingOptions {
   /** Whether targeting mode is active */

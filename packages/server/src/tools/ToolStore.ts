@@ -10,7 +10,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { ConfiguredTool } from '@contextual/shared';
+import type { ConfiguredTool } from '@contextualapp/shared';
 
 const TOOLS_FILENAME = 'tools.json';
 

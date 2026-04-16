@@ -1,5 +1,5 @@
 {
-  "name": "@contextual/shared",
+  "name": "@contextualapp/shared",
   "version": "0.1.0",
   "description": "Shared types and API contract for Contextual",
   "type": "module",

@@ -11,10 +11,10 @@ import type {
   ProjectSummary,
   ProjectListResponse,
   CreateProjectRequest,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 
 // Re-export so existing imports across context-manager stay stable
-export type { ProjectSummary, ProjectListResponse, CreateProjectRequest } from '@contextual/shared';
+export type { ProjectSummary, ProjectListResponse, CreateProjectRequest } from '@contextualapp/shared';
 
 // ---------------------------------------------------------------------------
 // Hook

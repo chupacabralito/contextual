@@ -8,7 +8,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { OutcomeSummary, PassOutcome } from '@contextual/shared';
+import type { OutcomeSummary, PassOutcome } from '@contextualapp/shared';
 import { normalizeOutcomeBase } from '../normalize.js';
 
 /** Sanitize an ISO timestamp for use in filenames (replace colons with dashes) */

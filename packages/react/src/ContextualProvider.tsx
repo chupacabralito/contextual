@@ -5,7 +5,7 @@
 // element highlights, and annotation input (near the targeted element).
 //
 // Usage:
-//   import { ContextualProvider } from '@contextual/react';
+//   import { ContextualProvider } from '@contextualapp/react';
 //   <ContextualProvider>
 //     <App />
 //   </ContextualProvider>
@@ -19,7 +19,7 @@ import { ElementHighlight } from './components/ElementHighlight.js';
 import { AnnotationInput } from './components/AnnotationInput.js';
 import { ThemeContext, ThemeToggleContext, darkTheme, lightTheme } from './theme.js';
 import type { ContextualTheme, ThemeToggle } from './theme.js';
-import type { ContextType } from '@contextual/shared';
+import type { ContextType } from '@contextualapp/shared';
 
 interface ContextualProviderProps {
   children: React.ReactNode;

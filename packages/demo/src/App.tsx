@@ -1,5 +1,5 @@
 import React from 'react';
-import { ContextualProvider } from '@contextual/react';
+import { ContextualProvider } from '@contextualapp/react';
 import { MockCheckout } from './MockCheckout.js';
 
 /**

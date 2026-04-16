@@ -1,20 +1,20 @@
 {
-  "name": "@contextual/context-manager",
+  "name": "@contextualapp/context-manager",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "npm run build --workspace=@contextual/shared && npm run build --workspace=@contextual/react",
+    "prebuild": "npm run build --workspace=@contextualapp/shared && npm run build --workspace=@contextualapp/react",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "pretypecheck": "npm run build --workspace=@contextual/shared && npm run build --workspace=@contextual/react",
+    "pretypecheck": "npm run build --workspace=@contextualapp/shared && npm run build --workspace=@contextualapp/react",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@contextual/react": "*",
-    "@contextual/shared": "*",
+    "@contextualapp/react": "*",
+    "@contextualapp/shared": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -6,8 +6,8 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { ScaffoldRequest, ScaffoldResponse, ContextType } from '@contextual/shared';
-import { DEFAULT_CONTEXT_FOLDERS, DEFAULT_LEARNED_FOLDERS } from '@contextual/shared';
+import type { ScaffoldRequest, ScaffoldResponse, ContextType } from '@contextualapp/shared';
+import { DEFAULT_CONTEXT_FOLDERS, DEFAULT_LEARNED_FOLDERS } from '@contextualapp/shared';
 
 const README_CONTENT: Record<ContextType, string> = {
   research: 'User interviews, findings, pain points, usability studies',

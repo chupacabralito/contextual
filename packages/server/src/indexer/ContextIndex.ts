@@ -14,8 +14,8 @@ import type {
   ContextMatch,
   ContextType,
   Suggestion,
-} from '@contextual/shared';
-import { CONTEXT_TYPES } from '@contextual/shared';
+} from '@contextualapp/shared';
+import { CONTEXT_TYPES } from '@contextualapp/shared';
 
 interface IndexedDocument {
   filePath: string;

@@ -1,5 +1,5 @@
 // =============================================================================
-// @contextual/react - React Annotation Component
+// @contextualapp/react - React Annotation Component
 // =============================================================================
 // In-browser annotation component for AI-assisted design iteration.
 // Renders alongside prototypes. Handles element targeting, queue-based
@@ -35,4 +35,4 @@ export type {
   PassOutcome,
   ContextType,
   ContextMatch,
-} from '@contextual/shared';
+} from '@contextualapp/shared';

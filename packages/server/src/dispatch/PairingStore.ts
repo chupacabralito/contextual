@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { TerminalPairing } from '@contextual/shared';
+import type { TerminalPairing } from '@contextualapp/shared';
 
 export class PairingStore {
   private readonly pairingPath: string;

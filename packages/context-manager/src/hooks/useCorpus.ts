@@ -20,16 +20,16 @@ export type {
   CompiledFileMeta,
   CorpusTypeEntry,
   CorpusResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 
-export { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextual/shared';
+export { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextualapp/shared';
 
 import type {
   ContextType,
   ContextPriority,
   CorpusResponse,
-} from '@contextual/shared';
-import { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextual/shared';
+} from '@contextualapp/shared';
+import { CONTEXT_TYPES, DEFAULT_PRIORITIES } from '@contextualapp/shared';
 
 // ---------------------------------------------------------------------------
 // Labels & descriptions

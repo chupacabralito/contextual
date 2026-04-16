@@ -6,8 +6,8 @@
 // =============================================================================
 
 import React from 'react';
-import { DEFAULT_LEARNED_FOLDERS } from '@contextual/shared';
-import type { InstructionLearningDraft } from '@contextual/shared';
+import { DEFAULT_LEARNED_FOLDERS } from '@contextualapp/shared';
+import type { InstructionLearningDraft } from '@contextualapp/shared';
 import type { ReviewDrawerState } from '../hooks/useContextual.js';
 import { stripMentions } from '../mentions/parser.js';
 import { useTheme } from '../theme.js';

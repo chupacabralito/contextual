@@ -1,5 +1,5 @@
 // =============================================================================
-// @contextual/server - Local Context Server
+// @contextualapp/server - Local Context Server
 // =============================================================================
 // Node process that indexes context folders (markdown/JSON), resolves @mention
 // queries via SQLite FTS5 search, and serves results over local HTTP.
@@ -28,6 +28,6 @@ export type {
   SuggestResponse,
   ScaffoldRequest,
   ScaffoldResponse,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 
-export { DEFAULT_SERVER_PORT } from '@contextual/shared';
+export { DEFAULT_SERVER_PORT } from '@contextualapp/shared';

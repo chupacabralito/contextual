@@ -24,8 +24,8 @@ import type {
   PassOutcome,
   QueuedInstruction,
   TargetedElement,
-} from '@contextual/shared';
-import { DEFAULT_LEARNED_FOLDERS, isContextType } from '@contextual/shared';
+} from '@contextualapp/shared';
+import { DEFAULT_LEARNED_FOLDERS, isContextType } from '@contextualapp/shared';
 import { parseActions, stripMentions } from '../mentions/parser.js';
 import { formatPass } from '../output/formatter.js';
 import { useAnnotationQueue } from './useAnnotationQueue.js';

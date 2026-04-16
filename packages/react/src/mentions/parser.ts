@@ -7,7 +7,7 @@
 //   "Use @taste[stripe clarity] and @design-system[button primary]" -> [...]
 // =============================================================================
 
-import type { ParsedAction } from '@contextual/shared';
+import type { ParsedAction } from '@contextualapp/shared';
 
 /**
  * Regex to match @type[query] patterns in annotation text.

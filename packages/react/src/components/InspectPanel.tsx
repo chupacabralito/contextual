@@ -9,7 +9,7 @@
 // =============================================================================
 
 import React, { useEffect, useState } from 'react';
-import type { InspectResponse, TargetedElement } from '@contextual/shared';
+import type { InspectResponse, TargetedElement } from '@contextualapp/shared';
 import { stripMentions } from '../mentions/parser.js';
 import { useTheme } from '../theme.js';
 

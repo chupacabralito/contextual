@@ -9,7 +9,7 @@
 import type {
   QueuedInstruction,
   TargetedElement,
-} from '@contextual/shared';
+} from '@contextualapp/shared';
 import { stripMentions } from '../mentions/parser.js';
 
 /**
