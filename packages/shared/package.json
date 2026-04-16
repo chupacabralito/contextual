@@ -1,7 +1,6 @@
 {
   "name": "@contextual/shared",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "description": "Shared types and API contract for Contextual",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,5 +19,25 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chupacabralito/contextual.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/chupacabralito/contextual#readme",
+  "bugs": {
+    "url": "https://github.com/chupacabralito/contextual/issues"
+  },
+  "keywords": [
+    "contextual",
+    "context",
+    "ai",
+    "agent",
+    "types"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

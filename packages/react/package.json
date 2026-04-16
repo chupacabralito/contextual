@@ -1,6 +1,6 @@
 {
   "name": "@contextual/react",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "React annotation component for AI-assisted design iteration with organizational context",
   "type": "module",
   "main": "./dist/index.js",
@@ -27,7 +27,7 @@
     "react-dom": ">=18.0.0"
   },
   "dependencies": {
-    "@contextual/shared": "*"
+    "@contextual/shared": "^0.1.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
@@ -45,7 +45,20 @@
     "ai",
     "design",
     "context",
-    "agent"
+    "agent",
+    "contextual"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chupacabralito/contextual.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/chupacabralito/contextual#readme",
+  "bugs": {
+    "url": "https://github.com/chupacabralito/contextual/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }
