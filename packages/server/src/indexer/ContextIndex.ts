@@ -157,6 +157,11 @@ export class ContextIndex {
     await this.readyPromise;
   }
 
+  async refresh(): Promise<void> {
+    await this.ready();
+    await this.rebuildIndex();
+  }
+
   async close(): Promise<void> {
     if (this.watcher) {
       await this.watcher.close();

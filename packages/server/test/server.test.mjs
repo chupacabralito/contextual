@@ -64,6 +64,7 @@ async function startTestServer(contextRoot, options = {}) {
     port: 0, // Ephemeral port
     contextRoot,
     projectName: 'test-project',
+    watchFiles: false,
     ...options,
   });
 

@@ -44,7 +44,12 @@ async function request(baseUrl, method, urlPath, body) {
 test('e2e: full pass lifecycle (add source → compile → resolve → pass → outcome → inspect)', async (t) => {
   const tempDir = await makeTempDir();
 
-  const server = createServer({ port: 0, contextRoot: tempDir, projectName: 'smoke-test' });
+  const server = createServer({
+    port: 0,
+    contextRoot: tempDir,
+    projectName: 'smoke-test',
+    watchFiles: false,
+  });
   const httpServer = await server.start();
   const { port } = httpServer.address();
   const baseUrl = `http://localhost:${port}`;
@@ -228,7 +233,12 @@ test('e2e: full pass lifecycle (add source → compile → resolve → pass → 
 test('e2e: project lifecycle (create → list → detail)', async (t) => {
   const tempDir = await makeTempDir();
 
-  const server = createServer({ port: 0, contextRoot: tempDir, projectName: 'smoke-test' });
+  const server = createServer({
+    port: 0,
+    contextRoot: tempDir,
+    projectName: 'smoke-test',
+    watchFiles: false,
+  });
   const httpServer = await server.start();
   const { port } = httpServer.address();
   const baseUrl = `http://localhost:${port}`;

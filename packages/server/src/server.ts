@@ -119,7 +119,10 @@ interface ProjectOutcomeRecord {
 interface CreateServerOptions extends Partial<ServerConfig> {
   serveUi?: boolean;
   uiDir?: string;
+  watchFiles?: boolean;
 }
+
+const DEFAULT_LISTEN_HOST = '127.0.0.1';
 
 const VALID_RESOLUTION_DEPTHS: Set<string> = new Set([
   'light', 'standard', 'detailed', 'full',
@@ -362,7 +365,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
   const uiDir = path.resolve(configInput.uiDir ?? getDefaultUiDir());
 
   const app = express();
-  const index = new ContextIndex(config.contextRoot);
+  const index = new ContextIndex(config.contextRoot, { watch: configInput.watchFiles });
   const passStore = new PassStore(config.contextRoot);
   const outcomeStore = new OutcomeStore(config.contextRoot);
   const toolStore = new ToolStore(config.contextRoot);
@@ -449,6 +452,10 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
   async function ensureDir(directory: string): Promise<void> {
     await fs.mkdir(directory, { recursive: true });
+  }
+
+  async function refreshIndex(): Promise<void> {
+    await index.refresh();
   }
 
   function getTypePaths(type: ContextType) {
@@ -1562,6 +1569,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       for (const type of affectedTypes) {
         try {
           await compileSourcesForType(type as ContextType);
+          await refreshIndex();
         } catch (err) {
           console.error(`[contextual-server] Auto-compile failed for ${type}:`, err);
         }
@@ -1677,6 +1685,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       await fs.mkdir(typeDir, { recursive: true });
       const compiledPath = path.join(typeDir, 'compiled.md');
       await writeFileAtomic(compiledPath, content);
+      await refreshIndex();
       res.json({ ok: true });
     } catch (error) {
       console.error(`Update compiled file failed for ${type}:`, error);
@@ -1736,6 +1745,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       const compiledContent = sections.join('\n');
       const compiledPath = path.join(typeDir, 'compiled.md');
       await fs.writeFile(compiledPath, compiledContent, 'utf-8');
+      await refreshIndex();
 
       res.json({ ok: true, sourceCount: sources.length, compiledPath });
     } catch (error) {
@@ -1808,6 +1818,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       }
 
       await fs.writeFile(filePath, fileContent, 'utf-8');
+      await refreshIndex();
 
       res.status(201).json({
         filename,
@@ -1860,6 +1871,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     try {
       const filePath = path.join(config.contextRoot, type, '_sources', filename);
       await fs.unlink(filePath);
+      await refreshIndex();
       res.json({ ok: true, deleted: filename });
     } catch (error) {
       console.error(`Delete source failed for ${type}/${filename}:`, error);
@@ -2276,7 +2288,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       httpServer = http.createServer(app);
       await new Promise<void>((resolve, reject) => {
         httpServer!.once('error', reject);
-        httpServer!.listen(config.port, () => {
+        httpServer!.listen(config.port, DEFAULT_LISTEN_HOST, () => {
           httpServer!.off('error', reject);
           resolve();
         });
