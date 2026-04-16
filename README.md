@@ -24,7 +24,7 @@ Contextual has three parts:
 
 1. **Context manager** — a web UI for organizing your corpus: briefs, source material, compiled references, and project-scoped workflows.
 2. **Local server** — indexes your context corpus with full-text search, persists passes and outcomes, resolves `@source[query]` mentions, and dispatches work to paired terminal tabs.
-3. **React toolbar** (optional) — an in-browser overlay for pointing at UI elements, writing refinement instructions, and submitting passes without leaving the prototype.
+3. **React toolbar** (optional) — an in-browser toolbar for pointing at UI elements, writing refinement instructions, and submitting passes without leaving the prototype.
 
 The browser toolbar is optional. The core workflow is: context manager + Claude Code + repo-local artifacts.
 
@@ -73,40 +73,37 @@ This is how context compounds over time. Each session leaves behind knowledge th
 
 ## Quick Start
 
-### Prerequisites
+### 1. Install and initialize
 
-Clone this repo, install, build, and link the CLI:
-
-```bash
-git clone https://github.com/chupacabralito/contextual.git
-cd contextual
-npm install
-npm run build
-cd packages/server && npm link && cd ../..
-```
-
-This makes the `contextual-server` command available globally.
-
-### 1. Initialize your project
-
-From your project directory:
+From your project directory (Vite+React or Next.js):
 
 ```bash
 cd ~/my-project
-contextual-server init
+npm install @contextualapp/server
+npx contextual-server init
 ```
 
-This detects your framework (Next.js, Vite+React), scaffolds a `.contextual/` directory with a persisted config, adds `@contextualapp/react` and `@contextualapp/shared` as dependencies, and injects the overlay into your root layout. If dependencies were added, run `npm install` afterward.
+`init` detects your framework, scaffolds a `.contextual/` context folder, installs `@contextualapp/react` and `@contextualapp/shared`, generates the toolbar component, and injects it into your app entry point (`main.tsx` for Vite, `layout.tsx` for Next.js).
 
 ### 2. Start Contextual
 
 ```bash
-contextual-server start
+npx contextual-server start
 ```
 
 This starts the API server and context manager on a single port (default: 4700). Open `http://localhost:4700` to access the context manager. The command automatically finds your `.contextual/` directory in the current working directory.
 
-### 3. Pair your Claude Code terminal tab
+### 3. Start your dev server
+
+In a second terminal tab:
+
+```bash
+npm run dev
+```
+
+The toolbar appears in your app at the bottom of the screen.
+
+### 4. Pair your Claude Code terminal tab
 
 In the Terminal.app tab where Claude Code is running:
 
@@ -119,7 +116,7 @@ Pairing connects this specific terminal tab to your context root. When you submi
 
 The `pair` command validates that the server is reachable and shows exactly where the pairing file is written, so you can confirm the connection.
 
-### 4. Start working
+### 5. Start working
 
 Open the context manager at `http://localhost:4700`, write your brief, add source material to the context folders, and begin making passes.
 
@@ -166,8 +163,8 @@ contextual-server pair --context-root "/path/to/your-private-context"
 ## Daily Workflow
 
 1. `cd` into your project directory.
-2. Run `contextual-server start`.
-3. Open a new Terminal.app tab, `cd` to your project, and run `contextual-server pair`.
+2. Run `npx contextual-server start`.
+3. Open a new Terminal.app tab, `cd` to your project, and run `npx contextual-server pair`.
 4. Run `claude` in that same tab.
 5. Open `http://localhost:4700` to manage context and make passes.
 6. Review outcomes and keep the repo-local context healthy.
@@ -243,6 +240,16 @@ contextual-server record-outcome --context-root <path> --pass-id <id> --status <
 All commands that accept `--context-root` also support automatic resolution: they check for `.contextual/config.json` or a `.contextual/` directory in the current working directory before falling back.
 
 ## Contributing
+
+### Development Setup
+
+```bash
+git clone https://github.com/chupacabralito/contextual.git
+cd contextual
+npm install
+npm run build
+npm link --workspace=@contextualapp/server
+```
 
 ### npm Scripts
 
@@ -363,5 +370,5 @@ my-context/
 ## Known Limits
 
 - Pairing supports Terminal.app only (macOS).
-- Not yet published to npm — requires cloning the repo and linking.
-- Browser integration is optional and depends on your app exposing a local browser UI.
+- Toolbar auto-injection targets `create-vite` (React+TS) and `create-next-app` entry points. Non-standard setups may need manual wiring.
+- Browser toolbar is optional — the core workflow is context manager + Claude Code + repo-local artifacts.

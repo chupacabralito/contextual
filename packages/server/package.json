@@ -1,6 +1,6 @@
 {
   "name": "@contextualapp/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local context server for Contextual - indexes and resolves organizational context",
   "type": "module",
   "main": "./dist/index.js",

@@ -12,6 +12,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { ensureFlywheelArtifacts } from './scaffold.js';
 import { writeProjectConfig } from './config.js';
 import { DEFAULT_CONTEXT_FOLDERS } from '@contextualapp/shared';
@@ -174,13 +175,15 @@ async function findNextLayout(projectDir: string, usesSrcDir: boolean): Promise<
  */
 async function findViteEntry(projectDir: string, usesSrcDir: boolean): Promise<string | null> {
   const base = usesSrcDir ? 'src' : '.';
+  // Prioritize main.tsx (the Vite entry point where <App /> is rendered)
+  // over App.tsx (the component itself) for auto-injection
   const candidates = [
-    `${base}/App.tsx`,
-    `${base}/App.jsx`,
-    `${base}/App.js`,
     `${base}/main.tsx`,
     `${base}/main.jsx`,
     `${base}/main.js`,
+    `${base}/App.tsx`,
+    `${base}/App.jsx`,
+    `${base}/App.js`,
   ];
 
   for (const candidate of candidates) {
@@ -224,6 +227,56 @@ function injectIntoNextLayout(
     const indent = match[1] || '            ';
     const wrapped = `${indent}<ContextualOverlay>\n${indent}  {children}\n${indent}</ContextualOverlay>`;
     const modified = withImport.replace(childrenPattern, wrapped);
+    return { modified, injected: true };
+  }
+
+  return { modified: withImport, injected: false };
+}
+
+/**
+ * Inject the ContextualOverlay import and wrapper into a Vite+React main.tsx.
+ *
+ * Targets the standard create-vite pattern:
+ *   <StrictMode>
+ *     <App />
+ *   </StrictMode>
+ *
+ * Wraps <App /> with <ContextualOverlay>:
+ *   <StrictMode>
+ *     <ContextualOverlay>
+ *       <App />
+ *     </ContextualOverlay>
+ *   </StrictMode>
+ */
+function injectIntoViteMain(
+  content: string,
+  overlayRelativePath: string,
+): { modified: string; injected: boolean } {
+  // Already integrated?
+  if (content.includes('ContextualOverlay')) {
+    return { modified: content, injected: false };
+  }
+
+  // Add import after the last existing import
+  const importStatement = `import { ContextualOverlay } from '${overlayRelativePath}'\n`;
+  const lastImportIndex = content.lastIndexOf('\nimport ');
+  let withImport: string;
+
+  if (lastImportIndex !== -1) {
+    const lineEnd = content.indexOf('\n', lastImportIndex + 1);
+    withImport =
+      content.slice(0, lineEnd + 1) + importStatement + content.slice(lineEnd + 1);
+  } else {
+    withImport = importStatement + content;
+  }
+
+  // Strategy: find <App /> (or <App/>) and wrap it with <ContextualOverlay>
+  const appPattern = /(\s*)<App\s*\/>/;
+  const match = withImport.match(appPattern);
+  if (match) {
+    const indent = match[1] || '    ';
+    const wrapped = `${indent}<ContextualOverlay>\n${indent}  <App />\n${indent}</ContextualOverlay>`;
+    const modified = withImport.replace(appPattern, wrapped);
     return { modified, injected: true };
   }
 
@@ -327,6 +380,7 @@ export interface InitResult {
   overlayPath: string | null;
   layoutModified: boolean;
   depsAdded: boolean;
+  depsInstalled: boolean;
   steps: string[];
 }
 
@@ -393,7 +447,20 @@ export async function init(options: InitOptions): Promise<InitResult> {
     steps.push('@contextualapp/react and @contextualapp/shared already in package.json');
   }
 
-  // Step 5: Generate overlay component
+  // Step 5: Auto-install dependencies if added
+  let depsInstalled = false;
+  if (depsAdded) {
+    try {
+      steps.push('Installing dependencies...');
+      execSync('npm install', { cwd: projectDir, stdio: 'pipe' });
+      depsInstalled = true;
+      steps.push('Installed @contextualapp/react and @contextualapp/shared');
+    } catch {
+      steps.push('Warning: npm install failed — please run `npm install` manually');
+    }
+  }
+
+  // Step 6: Generate overlay component
   let overlayPath: string | null = null;
   let layoutModified = false;
 
@@ -464,10 +531,35 @@ export async function init(options: InitOptions): Promise<InitResult> {
       steps.push(`Created ${path.relative(projectDir, overlayPath)}`);
     }
 
-    // For Vite we don't auto-inject — the entry patterns are too varied
-    steps.push(
-      'Wrap your root component with <ContextualOverlay> in App.tsx or main.tsx',
-    );
+    // Inject into main.tsx (the standard Vite entry point)
+    const mainPath = await findViteEntry(projectDir, project.usesSrcDir);
+    if (mainPath && path.basename(mainPath).startsWith('main')) {
+      const mainContent = await fs.readFile(mainPath, 'utf8');
+
+      // Compute relative import path from main.tsx to the overlay component
+      const mainDir = path.dirname(mainPath);
+      const overlayImportBase = path.relative(mainDir, overlayPath).replace(/\.[jt]sx?$/, '');
+      const overlayImport = overlayImportBase.startsWith('.')
+        ? overlayImportBase
+        : `./${overlayImportBase}`;
+
+      const { modified, injected } = injectIntoViteMain(mainContent, overlayImport);
+      if (injected) {
+        await fs.writeFile(mainPath, modified, 'utf8');
+        layoutModified = true;
+        steps.push(`Injected toolbar into ${path.relative(projectDir, mainPath)}`);
+      } else if (mainContent.includes('ContextualOverlay')) {
+        steps.push(`${path.relative(projectDir, mainPath)} already has toolbar`);
+      } else {
+        steps.push(
+          `Could not auto-inject toolbar — please manually wrap <App /> with <ContextualOverlay> in ${path.relative(projectDir, mainPath)}`,
+        );
+      }
+    } else {
+      steps.push(
+        'Could not find main.tsx — please manually wrap <App /> with <ContextualOverlay>',
+      );
+    }
   }
 
   return {
@@ -477,6 +569,7 @@ export async function init(options: InitOptions): Promise<InitResult> {
     overlayPath,
     layoutModified,
     depsAdded,
+    depsInstalled,
     steps,
   };
 }

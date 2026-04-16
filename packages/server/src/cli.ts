@@ -420,14 +420,33 @@ async function runInit(): Promise<void> {
   }
   console.log('');
 
-  if (result.depsAdded) {
+  // Show next steps based on what was done automatically
+  const needsManualInstall = result.depsAdded && !result.depsInstalled;
+  const needsManualInject = !result.layoutModified && result.framework !== 'unknown';
+
+  if (needsManualInstall || needsManualInject) {
     console.log('  Next steps:');
-    console.log(`    1. Run \`npm install\``);
-    console.log(`    2. Start Contextual:`);
+    let step = 1;
+    if (needsManualInstall) {
+      console.log(`    ${step}. Run \`npm install\``);
+      step++;
+    }
+    if (needsManualInject) {
+      console.log(`    ${step}. Add the toolbar to your root component (see above)`);
+      step++;
+    }
+    console.log(`    ${step}. Start Contextual:`);
     console.log(`       contextual-server start`);
   } else {
-    console.log('  Start Contextual:');
-    console.log(`    contextual-server start`);
+    console.log('  Ready! Open three terminal tabs:');
+    console.log('');
+    console.log('    Tab 1:  contextual-server start          # context server + manager UI');
+    console.log('    Tab 2:  npm run dev                      # your app dev server');
+    console.log('    Tab 3:  contextual-server pair && claude  # pair terminal, then start agent');
+    console.log('');
+    console.log('  Then open your app in the browser — the toolbar will appear.');
+    console.log('  Open http://localhost:4700 for the context manager.');
+    console.log('  Passes submitted from the toolbar are dispatched to the paired tab.');
   }
   console.log('');
 }
