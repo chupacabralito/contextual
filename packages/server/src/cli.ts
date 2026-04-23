@@ -471,6 +471,14 @@ async function runStart(): Promise<void> {
       const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
 
       if (pkg.scripts?.dev) {
+        // Clear stale build cache before starting (prevents webpack chunk errors)
+        const nextCacheDir = path.join(projectDir, '.next');
+        try {
+          await fs.rm(nextCacheDir, { recursive: true, force: true });
+        } catch {
+          // .next may not exist — that's fine
+        }
+
         console.log(`  [app]         Starting dev server in ${projectDir}...`);
 
         devProcess = spawn('npm', ['run', 'dev'], {
