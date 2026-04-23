@@ -359,6 +359,60 @@ async function scaffoldContextFolder(contextRoot: string): Promise<void> {
 }
 
 // -----------------------------------------------------------------------------
+// CLAUDE.md guidelines
+// -----------------------------------------------------------------------------
+
+const CONTEXTUAL_CLAUDE_MD_SECTION = `
+
+## Contextual (Automated Passes)
+
+When executing passes dispatched by Contextual, follow these rules:
+
+- **Do NOT run production builds** (npm run build, next build, vite build, etc.) — the dev server is already running and a production build will corrupt its build cache, crashing the dev server.
+- **Let HMR handle reloads** — the dev server will hot-reload your changes automatically. There is no need to verify builds manually.
+- **Record the outcome** when finished — use the \`contextual-server record-outcome\` command provided in the pass prompt.
+`;
+
+const CONTEXTUAL_SECTION_MARKER = '## Contextual (Automated Passes)';
+
+/**
+ * Append Contextual agent guidelines to the project's CLAUDE.md.
+ * Creates the file if it doesn't exist. Skips if the section is already present.
+ */
+async function appendClaudeMdGuidelines(projectDir: string, steps: string[]): Promise<void> {
+  const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+
+  try {
+    // Check if CLAUDE.md already exists and has the section
+    let existingContent = '';
+    try {
+      existingContent = await fs.readFile(claudeMdPath, 'utf8');
+    } catch {
+      // File doesn't exist — we'll create it
+    }
+
+    if (existingContent.includes(CONTEXTUAL_SECTION_MARKER)) {
+      steps.push('CLAUDE.md already has Contextual agent guidelines');
+      return;
+    }
+
+    // Append the section
+    const newContent = existingContent
+      ? existingContent.trimEnd() + '\n' + CONTEXTUAL_CLAUDE_MD_SECTION
+      : `# CLAUDE.md\n${CONTEXTUAL_CLAUDE_MD_SECTION}`;
+
+    await fs.writeFile(claudeMdPath, newContent, 'utf8');
+    steps.push(
+      existingContent
+        ? 'Appended Contextual agent guidelines to CLAUDE.md'
+        : 'Created CLAUDE.md with Contextual agent guidelines',
+    );
+  } catch {
+    steps.push('Warning: Could not update CLAUDE.md — please add Contextual guidelines manually');
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Main init orchestrator
 // -----------------------------------------------------------------------------
 
@@ -561,6 +615,9 @@ export async function init(options: InitOptions): Promise<InitResult> {
       );
     }
   }
+
+  // Step 7: Append Contextual agent guidelines to CLAUDE.md
+  await appendClaudeMdGuidelines(projectDir, steps);
 
   return {
     framework: project.framework,
