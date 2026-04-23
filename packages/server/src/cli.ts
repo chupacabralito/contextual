@@ -388,8 +388,26 @@ async function runStart(): Promise<void> {
       const escapedProjectDir = projectDir.replace(/'/g, "'\\''");
 
       // Build the shell command to run in the new tab:
-      //   cd to project dir, pair, then clear the screen
-      const shellCmd = `cd '${escapedProjectDir}' && '${escapedBin}' pair --context-root '${escapedContextRoot}' && clear`;
+      //   cd to project dir, pair, clear, show instructions
+      const shellCmd = [
+        `cd '${escapedProjectDir}'`,
+        `'${escapedBin}' pair --context-root '${escapedContextRoot}'`,
+        'clear',
+        'echo ""',
+        'echo "  ─────────────────────────────────────────────"',
+        'echo "  Contextual Agent Tab"',
+        'echo "  ─────────────────────────────────────────────"',
+        'echo ""',
+        'echo "  This terminal is paired to receive passes."',
+        'echo "  Start your AI agent to begin:"',
+        'echo ""',
+        'echo "    claude"',
+        'echo ""',
+        'echo "  When you submit a pass from the toolbar,"',
+        'echo "  it will be dispatched here automatically."',
+        'echo "  ─────────────────────────────────────────────"',
+        'echo ""',
+      ].join(' && ');
 
       // AppleScript: open a new tab in the front window (Cmd+T), then run the command there.
       // "do script ... in front window" runs in the *last* tab of the front window,
