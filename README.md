@@ -83,7 +83,7 @@ npm install @contextualapp/server
 npx contextual-server init
 ```
 
-`init` detects your framework, scaffolds a `.contextual/` context folder, installs `@contextualapp/react` and `@contextualapp/shared`, generates the toolbar component, and injects it into your app entry point (`main.tsx` for Vite, `layout.tsx` for Next.js).
+`init` detects your framework, scaffolds a `.contextual/` context folder, installs `@contextualapp/react` and `@contextualapp/shared`, generates the toolbar component, injects it into your app entry point (`main.tsx` for Vite, `layout.tsx` for Next.js), and appends Contextual agent guidelines to your project's `CLAUDE.md`.
 
 ### 2. Start Contextual
 
@@ -91,36 +91,24 @@ npx contextual-server init
 npx contextual-server start
 ```
 
-This starts the API server and context manager on a single port (default: 4700). Open `http://localhost:4700` to access the context manager. The command automatically finds your `.contextual/` directory in the current working directory.
+This single command orchestrates the full workflow:
 
-### 3. Start your dev server
+1. Starts the API server and context manager on port 4700.
+2. Clears stale build cache (`.next/`) and spawns your dev server (`npm run dev`).
+3. Opens a new Terminal.app tab, pairs it for pass dispatch, and displays instructions to run `claude`.
+4. Auto-opens `http://localhost:4700` (context manager) in your default browser.
 
-In a second terminal tab:
+All output is prefixed (`[server]`, `[dev]`) and routed to the original terminal. Ctrl+C shuts everything down cleanly.
 
-```bash
-npm run dev
-```
+### 3. Start Claude Code
 
-The toolbar appears in your app at the bottom of the screen.
+In the newly opened Terminal.app tab, run `claude` as instructed. This tab is already paired — passes submitted from the context manager or toolbar will be dispatched directly into it via AppleScript.
 
-### 4. Pair your Claude Code terminal tab
-
-In the Terminal.app tab where Claude Code is running:
-
-```bash
-cd ~/my-project
-contextual-server pair
-```
-
-Pairing connects this specific terminal tab to your context root. When you submit a pass from the context manager or toolbar, it gets typed directly into this tab via AppleScript. The tab must stay open — if you close it, re-run `pair`.
-
-The `pair` command validates that the server is reachable and shows exactly where the pairing file is written, so you can confirm the connection.
-
-### 5. Start working
+### 4. Start working
 
 Open the context manager at `http://localhost:4700`, write your brief, add source material to the context folders, and begin making passes.
 
-If your repo has a browser UI, run it locally and use the Contextual toolbar to create passes visually by pointing at elements and writing instructions.
+If your repo has a browser UI, use the Contextual toolbar (visible at the bottom of your app) to create passes visually by pointing at elements and writing instructions. The dev server hot-reloads changes automatically — there is no need to run production builds.
 
 ### Context root resolution
 
@@ -163,11 +151,10 @@ contextual-server pair --context-root "/path/to/your-private-context"
 ## Daily Workflow
 
 1. `cd` into your project directory.
-2. Run `npx contextual-server start`.
-3. Open a new Terminal.app tab, `cd` to your project, and run `npx contextual-server pair`.
-4. Run `claude` in that same tab.
-5. Open `http://localhost:4700` to manage context and make passes.
-6. Review outcomes and keep the repo-local context healthy.
+2. Run `npx contextual-server start` — this starts the server, dev server, opens an agent tab, and launches the context manager in your browser.
+3. In the new Terminal.app tab, run `claude`.
+4. Make passes from the context manager or browser toolbar.
+5. Review outcomes and keep the repo-local context healthy.
 
 ## Architecture
 
@@ -219,9 +206,9 @@ Vite + React 19 app with a two-panel layout. Left panel shows a hierarchical tre
 
 ```bash
 # Product commands
-contextual-server init [--project-dir <path>]        # Detect framework, scaffold, inject toolbar
-contextual-server start [--context-root <path>] [--port <port>]  # API server + context manager UI
-contextual-server pair [--context-root <path>]        # Connect this terminal tab for dispatch
+contextual-server init [--project-dir <path>]        # Detect framework, scaffold, inject toolbar, update CLAUDE.md
+contextual-server start [--context-root <path>] [--port <port>]  # Full workflow: server + dev server + agent tab + browser
+contextual-server pair [--context-root <path>]        # Connect this terminal tab for dispatch (manual pairing)
 contextual-server pair-status [--context-root <path>] # Check pairing + TTY liveness
 contextual-server unpair [--context-root <path>]      # Disconnect paired terminal
 
