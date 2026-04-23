@@ -4,9 +4,11 @@
 // =============================================================================
 // Commands:
 //   contextual-server init                              # from your project dir
-//   contextual-server dev                               # from your project dir
+//   contextual-server start                             # unified: server + dev + pair + browser
+//   contextual-server start --no-dev                    # skip consumer dev server
+//   contextual-server start --no-open                   # skip auto-opening browser
 //   contextual-server [serve] --context-root ./my-project --port 4700
-//   contextual-server start --context-root ./my-project --port 4700
+//   contextual-server dev                               # monorepo dev script
 //   contextual-server scaffold --project-name contextual-context --base-path .
 //   contextual-server pair --context-root ./my-project
 //   contextual-server pair-status --context-root ./my-project
@@ -16,7 +18,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, exec, type ChildProcess } from 'node:child_process';
 import type {
   InstructionReview,
   InstructionReviewStatus,
@@ -31,7 +33,7 @@ import { PassStore } from './passes/PassStore.js';
 import { OutcomeStore } from './outcomes/OutcomeStore.js';
 import { scaffold } from './scaffold.js';
 import { init } from './init.js';
-import { resolveContextRoot } from './config.js';
+import { resolveContextRoot, readProjectConfig } from './config.js';
 
 const rawArgs = process.argv.slice(2);
 const command = rawArgs[0] && !rawArgs[0]!.startsWith('--') ? rawArgs[0]! : 'serve';
@@ -341,7 +343,182 @@ async function runServe(): Promise<void> {
 }
 
 async function runStart(): Promise<void> {
-  await runHttpServer({ serveUi: true });
+  const skipDev = args.includes('--no-dev');
+  const skipOpen = args.includes('--no-open');
+
+  const { contextRoot } = await resolveContextRoot({
+    explicitContextRoot: getArg('context-root'),
+  });
+  const config = {
+    port: parseInt(getArg('port') ?? String(DEFAULT_SERVER_PORT), 10),
+    contextRoot,
+    projectName: getArg('project') ?? deriveProjectName(contextRoot),
+  };
+
+  await ensureContextRootExists(config.contextRoot);
+
+  // Resolve projectDir from config.json (where the consumer app lives)
+  const projectConfig = await readProjectConfig(config.contextRoot);
+  const projectDir = projectConfig?.projectDir ?? path.dirname(config.contextRoot);
+
+  // ---- Step 1: Start Contextual server (API + Context Manager UI) ----
+  console.log('');
+  console.log('  Starting Contextual...');
+  console.log('');
+
+  const server = createServer({
+    ...config,
+    serveUi: true,
+  });
+  await server.start();
+
+  const health = await server.index.getStats();
+  console.log(`  [contextual]  Server running on http://localhost:${config.port}`);
+  console.log(`  [contextual]  Indexed ${health.indexedFiles} context files`);
+
+  // ---- Step 2: Auto-pair this terminal ----
+  let paired = false;
+  const termProgram = process.env.TERM_PROGRAM ?? '';
+  if (termProgram === 'Apple_Terminal') {
+    try {
+      const tty = await detectCurrentTty();
+      const pairingStore = new PairingStore(config.contextRoot);
+      await pairingStore.savePairing({
+        tty,
+        termProgram,
+        workingDirectory: process.cwd(),
+      });
+      paired = true;
+      console.log(`  [contextual]  Terminal paired (${tty})`);
+    } catch {
+      console.log('  [contextual]  Could not auto-pair terminal (run `contextual-server pair` manually)');
+    }
+  } else {
+    console.log(`  [contextual]  Skipping terminal pairing (requires Terminal.app, current: ${termProgram || 'unknown'})`);
+  }
+
+  // ---- Step 3: Start consumer dev server ----
+  let devProcess: ChildProcess | null = null;
+  let detectedDevPort: number | null = null;
+
+  if (!skipDev) {
+    try {
+      const pkgPath = path.join(projectDir, 'package.json');
+      const pkgRaw = await fs.readFile(pkgPath, 'utf8');
+      const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
+
+      if (pkg.scripts?.dev) {
+        console.log(`  [app]         Starting dev server in ${projectDir}...`);
+
+        devProcess = spawn('npm', ['run', 'dev'], {
+          cwd: projectDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+
+        // Stream dev server output with [app] prefix
+        const prefixStream = (stream: NodeJS.ReadableStream | null, label: string) => {
+          if (!stream) return;
+          let buffer = '';
+          stream.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString();
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              if (line.trim()) {
+                console.log(`  [${label}]  ${line}`);
+
+                // Detect dev server port from output
+                const portMatch = line.match(/localhost:(\d+)/);
+                if (portMatch && !detectedDevPort) {
+                  detectedDevPort = parseInt(portMatch[1]!, 10);
+                }
+              }
+            }
+          });
+        };
+
+        prefixStream(devProcess.stdout, 'app      ');
+        prefixStream(devProcess.stderr, 'app      ');
+
+        devProcess.on('error', (err) => {
+          console.error(`  [app]         Failed to start: ${err.message}`);
+        });
+
+        devProcess.on('exit', (code) => {
+          if (code !== null && code !== 0) {
+            console.log(`  [app]         Dev server exited with code ${code}`);
+          }
+          devProcess = null;
+        });
+
+        // Wait a moment for the dev server to print its port
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      } else {
+        console.log('  [app]         No "dev" script found in package.json — skipping');
+      }
+    } catch {
+      console.log(`  [app]         Could not read package.json in ${projectDir} — skipping dev server`);
+    }
+  }
+
+  // ---- Step 4: Auto-open browser ----
+  if (!skipOpen) {
+    // Open context manager
+    exec(`open http://localhost:${config.port}`);
+
+    // Open the app if we detected its port
+    if (detectedDevPort) {
+      exec(`open http://localhost:${detectedDevPort}`);
+    }
+  }
+
+  // ---- Summary ----
+  console.log('');
+  console.log('  ─────────────────────────────────────────────');
+  console.log(`  Context Manager:  http://localhost:${config.port}`);
+  if (detectedDevPort) {
+    console.log(`  App:              http://localhost:${detectedDevPort}`);
+  }
+  console.log(`  Terminal paired:  ${paired ? 'yes' : 'no'}`);
+  console.log('');
+  console.log('  Press Cmd+Shift+A in your app to open the annotation toolbar.');
+  if (paired) {
+    console.log('  Passes will be dispatched to this terminal.');
+  }
+  console.log('  Press Ctrl+C to stop all services.');
+  console.log('  ─────────────────────────────────────────────');
+  console.log('');
+
+  // ---- Unified shutdown ----
+  const shutdown = async (signal: string) => {
+    console.log(`\n  Received ${signal}, shutting down...`);
+
+    // Kill dev server first
+    if (devProcess) {
+      devProcess.kill('SIGTERM');
+      // Give it a moment to exit
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (devProcess && !devProcess.killed) {
+        devProcess.kill('SIGKILL');
+      }
+    }
+
+    try {
+      await server.stop();
+    } catch (error) {
+      console.error('  Failed to shut down cleanly:', error);
+    }
+
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.on('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
 }
 
 async function runHttpServer(options: { serveUi: boolean }): Promise<void> {
@@ -438,15 +615,16 @@ async function runInit(): Promise<void> {
     console.log(`    ${step}. Start Contextual:`);
     console.log(`       contextual-server start`);
   } else {
-    console.log('  Ready! Open three terminal tabs:');
+    console.log('  Ready! Run:');
     console.log('');
-    console.log('    Tab 1:  contextual-server start          # context server + manager UI');
-    console.log('    Tab 2:  npm run dev                      # your app dev server');
-    console.log('    Tab 3:  contextual-server pair && claude  # pair terminal, then start agent');
+    console.log('    contextual-server start');
     console.log('');
-    console.log('  Then open your app in the browser — the toolbar will appear.');
-    console.log('  Open http://localhost:4700 for the context manager.');
-    console.log('  Passes submitted from the toolbar are dispatched to the paired tab.');
+    console.log('  This starts everything: context server, dev server, terminal pairing,');
+    console.log('  and opens the context manager in your browser.');
+    console.log('');
+    console.log('  Options:');
+    console.log('    --no-dev    Skip starting the dev server');
+    console.log('    --no-open   Skip auto-opening the browser');
   }
   console.log('');
 }
