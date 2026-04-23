@@ -645,7 +645,8 @@ async function runInit(): Promise<void> {
 
   // Show next steps based on what was done automatically
   const needsManualInstall = result.depsAdded && !result.depsInstalled;
-  const needsManualInject = !result.layoutModified && result.framework !== 'unknown';
+  const layoutAlreadyIntegrated = result.steps.some((s) => s.includes('already has ContextualOverlay') || s.includes('already has toolbar'));
+  const needsManualInject = !result.layoutModified && !layoutAlreadyIntegrated && result.framework !== 'unknown';
 
   if (needsManualInstall || needsManualInject) {
     console.log('  Next steps:');
