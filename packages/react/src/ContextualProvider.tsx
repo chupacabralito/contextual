@@ -50,6 +50,14 @@ export function ContextualProvider({
   affectedContextTypes,
   loadedContextPaths,
 }: ContextualProviderProps) {
+  // -------------------------------------------------------------------------
+  // SSR safety: defer all overlay rendering until after client mount so that
+  // server-rendered HTML matches the initial client render (just {children}).
+  // This prevents React hydration mismatches in Next.js and other SSR setups.
+  // -------------------------------------------------------------------------
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const contextual = useContextual({
     serverUrl,
     project,
@@ -143,6 +151,15 @@ export function ContextualProvider({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [contextual.state, contextual.cancel]);
+
+  // ---------------------------------------------------------------------------
+  // SSR: render only children until the client has mounted. This ensures the
+  // server HTML and the first client render are identical, avoiding hydration
+  // mismatches. Overlays, side panel, and event listeners attach after mount.
+  // ---------------------------------------------------------------------------
+  if (!mounted) {
+    return <>{children}</>;
+  }
 
   return (
     <ThemeContext.Provider value={resolvedTheme}>
