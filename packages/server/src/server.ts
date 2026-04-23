@@ -261,6 +261,7 @@ function buildTerminalDispatchPrompt(
 
   return [
     `New pass submitted. Read ${passPathForPrompt} and execute all instructions.`,
+    'IMPORTANT: Do NOT run production builds (npm run build, next build, vite build, etc.) — the dev server is running and a production build will corrupt its cache. The dev server will hot-reload your changes automatically.',
     `When finished, record the result so Contextual can sync it back into the toolbar.`,
     'Run this and adjust the flags to match what happened:',
     `contextual-server record-outcome --context-root "${escapedContextRoot}" --pass-id "${escapedPassId}" --status approved-with-feedback --summary "..." --feedback "..."`,
