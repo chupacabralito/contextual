@@ -376,25 +376,58 @@ async function runStart(): Promise<void> {
   console.log(`  [contextual]  Server running on http://localhost:${config.port}`);
   console.log(`  [contextual]  Indexed ${health.indexedFiles} context files`);
 
-  // ---- Step 2: Auto-pair this terminal ----
+  // ---- Step 2: Open a new Terminal tab and pair it for agent dispatch ----
   let paired = false;
   const termProgram = process.env.TERM_PROGRAM ?? '';
   if (termProgram === 'Apple_Terminal') {
     try {
-      const tty = await detectCurrentTty();
-      const pairingStore = new PairingStore(config.contextRoot);
-      await pairingStore.savePairing({
-        tty,
-        termProgram,
-        workingDirectory: process.cwd(),
+      // Resolve the contextual-server binary path so the new tab can run pair
+      const contextualBin = process.argv[1] ?? 'contextual-server';
+      const escapedContextRoot = config.contextRoot.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const escapedBin = contextualBin.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const escapedProjectDir = projectDir.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+      // AppleScript: open a new tab, cd to project dir, pair, then clear
+      const appleScript = [
+        'tell application "Terminal"',
+        '  activate',
+        `  do script "cd \\"${escapedProjectDir}\\" && \\"${escapedBin}\\" pair --context-root \\"${escapedContextRoot}\\" && clear"`,
+        'end tell',
+      ].join('\n');
+
+      await new Promise<void>((resolve, reject) => {
+        exec(
+          `osascript -e '${appleScript.replace(/'/g, "'\\''")}'`,
+          { timeout: 10000 },
+          (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          },
+        );
       });
-      paired = true;
-      console.log(`  [contextual]  Terminal paired (${tty})`);
+
+      // Wait for the new tab to pair (it writes terminal-pairing.json)
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const pairingStore = new PairingStore(config.contextRoot);
+      const pairing = await pairingStore.getPairing();
+      paired = pairing !== null;
+
+      if (paired) {
+        console.log(`  [contextual]  Agent tab opened and paired (${pairing!.tty})`);
+        console.log('  [contextual]  Passes will be dispatched to the new tab');
+      } else {
+        console.log('  [contextual]  New tab opened but pairing not confirmed — run `contextual-server pair` in the agent tab');
+      }
     } catch {
-      console.log('  [contextual]  Could not auto-pair terminal (run `contextual-server pair` manually)');
+      console.log('  [contextual]  Could not open agent tab (run `contextual-server pair` manually in a new tab)');
     }
   } else {
-    console.log(`  [contextual]  Skipping terminal pairing (requires Terminal.app, current: ${termProgram || 'unknown'})`);
+    console.log(`  [contextual]  Skipping agent tab (requires Terminal.app, current: ${termProgram || 'unknown'})`);
+    console.log('  [contextual]  Run `contextual-server pair` manually in the tab you want to receive passes');
   }
 
   // ---- Step 3: Start consumer dev server ----
@@ -480,11 +513,12 @@ async function runStart(): Promise<void> {
   if (detectedDevPort) {
     console.log(`  App:              http://localhost:${detectedDevPort}`);
   }
-  console.log(`  Terminal paired:  ${paired ? 'yes' : 'no'}`);
+  console.log(`  Agent tab:        ${paired ? 'paired and ready' : 'not paired'}`);
   console.log('');
   console.log('  Press Cmd+Shift+A in your app to open the annotation toolbar.');
   if (paired) {
-    console.log('  Passes will be dispatched to this terminal.');
+    console.log('  Passes will be dispatched to the agent tab.');
+    console.log('  Start `claude` in that tab to begin receiving passes.');
   }
   console.log('  Press Ctrl+C to stop all services.');
   console.log('  ─────────────────────────────────────────────');
