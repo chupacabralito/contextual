@@ -381,17 +381,29 @@ async function runStart(): Promise<void> {
   const termProgram = process.env.TERM_PROGRAM ?? '';
   if (termProgram === 'Apple_Terminal') {
     try {
-      // Resolve the contextual-server binary path so the new tab can run pair
-      const contextualBin = process.argv[1] ?? 'contextual-server';
-      const escapedContextRoot = config.contextRoot.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      const escapedBin = contextualBin.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      const escapedProjectDir = projectDir.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      // Use the absolute path to the CLI script so it works in the new tab's PATH
+      const contextualBin = path.resolve(process.argv[1] ?? 'contextual-server');
+      const escapedContextRoot = config.contextRoot.replace(/'/g, "'\\''");
+      const escapedBin = contextualBin.replace(/'/g, "'\\''");
+      const escapedProjectDir = projectDir.replace(/'/g, "'\\''");
 
-      // AppleScript: open a new tab, cd to project dir, pair, then clear
+      // Build the shell command to run in the new tab:
+      //   cd to project dir, pair, then clear the screen
+      const shellCmd = `cd '${escapedProjectDir}' && '${escapedBin}' pair --context-root '${escapedContextRoot}' && clear`;
+
+      // AppleScript: open a new tab in the front window (Cmd+T), then run the command there.
+      // "do script ... in front window" runs in the *last* tab of the front window,
+      // which after Cmd+T is the newly created tab.
       const appleScript = [
         'tell application "Terminal"',
         '  activate',
-        `  do script "cd \\"${escapedProjectDir}\\" && \\"${escapedBin}\\" pair --context-root \\"${escapedContextRoot}\\" && clear"`,
+        'end tell',
+        'tell application "System Events"',
+        '  keystroke "t" using command down',
+        'end tell',
+        'delay 0.5',
+        'tell application "Terminal"',
+        `  do script "${shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" in front window`,
         'end tell',
       ].join('\n');
 
@@ -410,7 +422,7 @@ async function runStart(): Promise<void> {
       });
 
       // Wait for the new tab to pair (it writes terminal-pairing.json)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const pairingStore = new PairingStore(config.contextRoot);
       const pairing = await pairingStore.getPairing();
