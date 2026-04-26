@@ -27,7 +27,6 @@ import { DiscoverModal } from './components/DiscoverModal.js';
 import { ProjectDetail } from './components/ProjectDetail.js';
 import { ProductBriefView } from './components/ProductBriefView.js';
 import { OutcomeCard } from './components/OutcomeCard.js';
-import { NextStepsCard } from './components/NextStepsCard.js';
 import type { ContextType } from './hooks/useCorpus.js';
 import { CONTEXT_TYPES, TYPE_LABELS } from './hooks/useCorpus.js';
 
@@ -39,9 +38,7 @@ export function App() {
   const [showImport, setShowImport] = useState(false);
   const [showDiscover, setShowDiscover] = useState(false);
   const [_viewingSource, setViewingSource] = useState<string | null>(null);
-  const [homeTab, setHomeTab] = useState<'next-steps' | 'sources' | 'passes' | 'outcomes'>(
-    'next-steps'
-  );
+  const [homeTab, setHomeTab] = useState<'sources' | 'passes' | 'outcomes'>('sources');
 
   // Derived state from selection
   const selectedType = selection?.category ?? null;
@@ -420,16 +417,7 @@ export function App() {
                       Outcomes
                       <span className="home-tab-count">{allOutcomes.length}</span>
                     </button>
-                    <button
-                      type="button"
-                      className={`home-tab${homeTab === 'next-steps' ? ' active' : ''}`}
-                      onClick={() => setHomeTab('next-steps')}
-                    >
-                      Contextual Instructions
-                    </button>
                   </div>
-
-                  {homeTab === 'next-steps' && <NextStepsCard />}
 
                   {/* Sources tab */}
                   {homeTab === 'sources' && (
