@@ -1,6 +1,6 @@
 {
   "name": "@contextualapp/server",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Local context server for Contextual - indexes and resolves organizational context",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,7 +20,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@contextualapp/shared": "^0.1.2",
+    "@contextualapp/shared": "^0.2.0",
     "sql.js": "^1.11.0",
     "chokidar": "^4.0.0",
     "cors": "^2.8.5",

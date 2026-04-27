@@ -15,7 +15,7 @@ import { apiFetch } from './api/client.js';
 import { useCorpus } from './hooks/useCorpus.js';
 import { useSources } from './hooks/useSources.js';
 import { useCompiledFile } from './hooks/useCompiledFile.js';
-import { useProjects } from './hooks/useProjects.js';
+import { useInitiatives } from './hooks/useProjects.js';
 import { CorpusTree } from './components/CorpusTree.js';
 import type { SidebarSelection } from './components/CorpusTree.js';
 import { PasteZone } from './components/PasteZone.js';
@@ -32,7 +32,7 @@ import { CONTEXT_TYPES, TYPE_LABELS } from './hooks/useCorpus.js';
 
 export function App() {
   const corpus = useCorpus();
-  const projects = useProjects();
+  const initiatives = useInitiatives();
   const [selection, setSelection] = useState<SidebarSelection | null>(null);
   const [showAddSource, setShowAddSource] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -42,7 +42,7 @@ export function App() {
 
   // Derived state from selection
   const selectedType = selection?.category ?? null;
-  const activeProject = selection?.scope !== 'product' ? (selection?.scope ?? null) : null;
+  const activeInitiative = selection?.scope !== 'product' ? (selection?.scope ?? null) : null;
 
   // All sources (shown at home level)
   interface SourceEntry {
@@ -195,7 +195,7 @@ export function App() {
   }, [corpus.data]); // Re-fetch when corpus changes
 
   // Whether we're at the "home" level (product scope, no type selected)
-  const isHome = !selectedType && !activeProject;
+  const isHome = !selectedType && !activeInitiative;
 
   const handleSelect = useCallback(
     (sel: SidebarSelection) => {
@@ -329,13 +329,13 @@ export function App() {
   }, [data?.project, data?.contextRoot]);
 
   // Adapter: ProjectDetail.onSelectType expects (type: string | null)
-  const handleSelectTypeForProject = useCallback(
+  const handleSelectTypeForInitiative = useCallback(
     (type: string | null) => {
-      if (type && activeProject) {
-        setSelection({ scope: activeProject, category: type as ContextType });
+      if (type && activeInitiative) {
+        setSelection({ scope: activeInitiative, category: type as ContextType });
       }
     },
-    [activeProject]
+    [activeInitiative]
   );
 
   // Loading state
@@ -366,10 +366,13 @@ export function App() {
           <CorpusTree
             types={types}
             productName={productName}
-            projects={projects.projects}
-            projectsLoading={projects.isLoading}
+            initiatives={initiatives.initiatives}
+            initiativesLoading={initiatives.isLoading}
             selection={selection}
             onSelect={handleSelect}
+            onCreateInitiative={async ({ name, title }) => {
+              await initiatives.createInitiative({ name, title });
+            }}
           />
         </aside>
 
@@ -589,12 +592,12 @@ export function App() {
             </>
           )}
 
-          {/* Project detail when a project is selected without a specific type */}
-          {activeProject && !selectedType && (
+          {/* Initiative detail when an initiative is selected without a specific type */}
+          {activeInitiative && !selectedType && (
             <div className="cm-center-detail">
               <ProjectDetail
-                projectName={activeProject}
-                onSelectType={handleSelectTypeForProject}
+                projectName={activeInitiative}
+                onSelectType={handleSelectTypeForInitiative}
                 onPaste={handlePaste}
                 onDeleteSource={handleDeleteSourceByType}
               />

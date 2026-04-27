@@ -273,7 +273,7 @@ pre {
   margin-top: 0.25rem;
 }
 
-/* "Projects" label */
+/* "Initiatives" label */
 .tree-section-label {
   padding: 0.3rem 0.5rem;
   font-size: 0.68rem;
@@ -281,6 +281,112 @@ pre {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+}
+
+.tree-section-label-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tree-section-add {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.tree-section-add:hover:not(:disabled) {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.tree-section-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tree-section-empty-add {
+  appearance: none;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  padding: 0.4rem 0.6rem;
+  margin: 0.25rem 0.5rem 0.25rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.tree-section-empty-add:hover {
+  color: var(--text);
+  border-color: var(--text);
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+
+/* Inline create row */
+.tree-initiative-create {
+  padding: 0.3rem 0.5rem 0.5rem;
+}
+
+.tree-initiative-create-row {
+  display: flex;
+  align-items: center;
+}
+
+.tree-initiative-create-input {
+  flex: 1 1 auto;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface, transparent);
+  color: var(--text);
+  outline: none;
+}
+
+.tree-initiative-create-input:focus {
+  border-color: var(--accent, var(--text));
+  box-shadow: 0 0 0 2px rgba(127, 127, 127, 0.12);
+}
+
+.tree-initiative-create-input:disabled {
+  opacity: 0.6;
+}
+
+.tree-initiative-create-hint {
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.tree-initiative-create-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+}
+
+.tree-initiative-create-error {
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--danger, #c84b4b);
 }
 
 .tree-loading,
@@ -318,16 +424,31 @@ pre {
 
 .tree-scope-toggle {
   flex-shrink: 0;
-  width: 1em;
-  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  font-size: 0.7rem;
+  line-height: 1;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
-  text-align: center;
 }
 
 .tree-scope-toggle:hover {
   color: var(--text);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.tree-scope-toggle:focus-visible {
+  outline: 1px solid var(--accent, #6c5ce7);
+  outline-offset: 1px;
 }
 
 .tree-scope-name {
@@ -346,8 +467,9 @@ pre {
   color: var(--muted);
 }
 
-/* Project header is slightly smaller */
-.tree-project-header .tree-scope-name {
+/* Project / Initiative header is slightly smaller */
+.tree-project-header .tree-scope-name,
+.tree-initiative-header .tree-scope-name {
   font-size: 0.82rem;
   font-weight: 500;
 }
@@ -406,12 +528,14 @@ pre {
   color: var(--muted);
 }
 
-/* Project-level category (nested under a project) */
-.tree-project-category .tree-category-name {
+/* Project / Initiative-level category (nested under an initiative) */
+.tree-project-category .tree-category-name,
+.tree-initiative-category .tree-category-name {
   font-size: 0.75rem;
 }
 
-.tree-project {
+.tree-project,
+.tree-initiative {
   display: flex;
   flex-direction: column;
 }

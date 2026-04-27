@@ -1,27 +1,27 @@
 import type {
-  CreateProjectRequest,
-  CreateProjectResponse,
-  ProjectDetailResponse,
-  ProjectListResponse,
+  CreateInitiativeRequest,
+  CreateInitiativeResponse,
+  InitiativeDetailResponse,
+  InitiativeListResponse,
 } from '@contextualapp/shared';
 import { apiFetch } from './client.js';
 
-export async function fetchProjects(): Promise<ProjectListResponse> {
-  const res = await apiFetch('/api/projects');
-  if (!res.ok) throw new Error(`Failed to fetch projects: ${res.status}`);
-  return res.json() as Promise<ProjectListResponse>;
+export async function fetchInitiatives(): Promise<InitiativeListResponse> {
+  const res = await apiFetch('/api/initiatives');
+  if (!res.ok) throw new Error(`Failed to fetch initiatives: ${res.status}`);
+  return res.json() as Promise<InitiativeListResponse>;
 }
 
-export async function fetchProject(name: string): Promise<ProjectDetailResponse> {
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(name)}`);
-  if (!res.ok) throw new Error(`Failed to fetch project: ${res.status}`);
-  return res.json() as Promise<ProjectDetailResponse>;
+export async function fetchInitiative(name: string): Promise<InitiativeDetailResponse> {
+  const res = await apiFetch(`/api/initiatives/${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error(`Failed to fetch initiative: ${res.status}`);
+  return res.json() as Promise<InitiativeDetailResponse>;
 }
 
-export async function createProject(
-  request: CreateProjectRequest
-): Promise<CreateProjectResponse> {
-  const res = await apiFetch('/api/projects', {
+export async function createInitiative(
+  request: CreateInitiativeRequest
+): Promise<CreateInitiativeResponse> {
+  const res = await apiFetch('/api/initiatives', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
@@ -29,10 +29,10 @@ export async function createProject(
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(
-      (body as { error?: string }).error || `Failed to create project: ${res.status}`
+      (body as { error?: string }).error || `Failed to create initiative: ${res.status}`
     );
   }
-  return res.json() as Promise<CreateProjectResponse>;
+  return res.json() as Promise<CreateInitiativeResponse>;
 }
 
 export async function updatePriority(

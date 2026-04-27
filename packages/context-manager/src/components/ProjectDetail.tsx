@@ -1,7 +1,7 @@
 // =============================================================================
 // ProjectDetail
 // =============================================================================
-// Shows project brief, active context types, and pass history when a project
+// Shows initiative brief, active context types, and pass history when an initiative
 // is selected in the sidebar. Appears in the right panel (replacing the
 // type detail view).
 // =============================================================================
@@ -25,7 +25,7 @@ interface PassRecord {
   instructions: PassInstruction[];
 }
 
-interface ProjectBrief {
+interface InitiativeBrief {
   name: string;
   title: string;
   description: string;
@@ -35,19 +35,19 @@ interface ProjectBrief {
   body?: string;
 }
 
-interface ProjectOutcomeRecord {
+interface InitiativeOutcomeRecord {
   id: string;
   passId: string;
   timestamp: string;
   status: string;
 }
 
-interface ProjectDetailData {
-  brief: ProjectBrief;
+interface InitiativeDetailData {
+  brief: InitiativeBrief;
   passCount: number;
   outcomeCount?: number;
   passes: PassRecord[];
-  outcomes?: ProjectOutcomeRecord[];
+  outcomes?: InitiativeOutcomeRecord[];
 }
 
 interface SourceEntry {
@@ -106,12 +106,12 @@ function formatDate(iso: string): string {
 }
 
 export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSource }: ProjectDetailProps) {
-  const [data, setData] = useState<ProjectDetailData | null>(null);
+  const [data, setData] = useState<InitiativeDetailData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPasses, setExpandedPasses] = useState<Set<string>>(new Set());
   const [detailTab, setDetailTab] = useState<'sources' | 'passes' | 'outcomes'>('sources');
-  const [projectSources, setProjectSources] = useState<SourceEntry[]>([]);
+  const [initiativeSources, setInitiativeSources] = useState<SourceEntry[]>([]);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -133,11 +133,11 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
 
     try {
       const res = await apiFetch(`/api/projects/${encodeURIComponent(projectName)}`);
-      if (!res.ok) throw new Error(`Failed to load project: ${res.status}`);
-      const json = await res.json() as ProjectDetailData;
+      if (!res.ok) throw new Error(`Failed to load initiative: ${res.status}`);
+      const json = await res.json() as InitiativeDetailData;
       setData(json);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load project';
+      const message = err instanceof Error ? err.message : 'Failed to load initiative';
       setError(message);
     } finally {
       setIsLoading(false);
@@ -193,7 +193,7 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
       }
 
       if (active) {
-        setProjectSources(items);
+        setInitiativeSources(items);
         setSourcesLoading(false);
       }
     }
@@ -205,7 +205,7 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
   if (isLoading) {
     return (
       <div className="project-detail">
-        <div className="loading">Loading project...</div>
+        <div className="loading">Loading initiative...</div>
       </div>
     );
   }
@@ -213,13 +213,13 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
   if (error || !data) {
     return (
       <div className="project-detail">
-        <div className="project-detail-error">{error ?? 'Project not found'}</div>
+        <div className="project-detail-error">{error ?? 'Initiative not found'}</div>
       </div>
     );
   }
 
   const { brief, passes, outcomes } = data;
-  const projectOutcomes = outcomes ?? [];
+  const initiativeOutcomes = outcomes ?? [];
 
   return (
     <div className="project-detail">
@@ -234,11 +234,11 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
         <p className="project-detail-description">{brief.description}</p>
       )}
 
-      {/* Project Brief body */}
+      {/* Initiative Brief body */}
       {brief.body && (
         <div className="project-brief">
           <div className="project-brief-header">
-            <h3>Project Brief</h3>
+            <h3>Initiative Brief</h3>
           </div>
           <pre className="project-brief-content">{brief.body}</pre>
         </div>
@@ -277,7 +277,7 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
             onClick={() => setDetailTab('sources')}
           >
             Sources
-            <span className="home-tab-count">{projectSources.length}</span>
+            <span className="home-tab-count">{initiativeSources.length}</span>
           </button>
           <button
             type="button"
@@ -293,7 +293,7 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
             onClick={() => setDetailTab('outcomes')}
           >
             Outcomes
-            <span className="home-tab-count">{projectOutcomes.length}</span>
+            <span className="home-tab-count">{initiativeOutcomes.length}</span>
           </button>
         </div>
 
@@ -302,16 +302,16 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
           <div className="all-sources">
             {sourcesLoading ? (
               <div className="loading">Loading sources...</div>
-            ) : projectSources.length === 0 ? (
+            ) : initiativeSources.length === 0 ? (
               <div className="empty-state">
-                <p className="muted">No sources yet for this project.</p>
+                <p className="muted">No sources yet for this initiative.</p>
                 <p className="muted" style={{ fontSize: '0.85rem' }}>
                   Add source material via the context type views.
                 </p>
               </div>
             ) : (
               <div className="all-sources-list">
-                {projectSources.map((item) => {
+                {initiativeSources.map((item) => {
                   const itemKey = `${item.type}-${item.filename}`;
                   const isConfirming = confirmDelete === itemKey;
                   return (
@@ -362,7 +362,7 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
                                 onClick={() => {
                                   void onDeleteSource(item.type, item.filename);
                                   setConfirmDelete(null);
-                                  setProjectSources((prev) =>
+                                  setInitiativeSources((prev) =>
                                     prev.filter((s) => !(s.type === item.type && s.filename === item.filename))
                                   );
                                 }}
@@ -438,13 +438,13 @@ export function ProjectDetail({ projectName, onSelectType, onPaste, onDeleteSour
         {/* Outcomes tab */}
         {detailTab === 'outcomes' && (
           <div className="home-outcomes">
-            {projectOutcomes.length === 0 ? (
+            {initiativeOutcomes.length === 0 ? (
               <div className="empty-state">
-                <p className="muted">No outcomes yet for this project.</p>
+                <p className="muted">No outcomes yet for this initiative.</p>
               </div>
             ) : (
               <div className="home-outcomes-list">
-                {projectOutcomes.map((outcome) => (
+                {initiativeOutcomes.map((outcome) => (
                   <OutcomeCard
                     key={outcome.id}
                     outcome={outcome}

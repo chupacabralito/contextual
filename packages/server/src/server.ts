@@ -22,12 +22,18 @@ import type {
   CompiledFileMeta,
   CorpusResponse,
   CorpusTypeEntry,
+  CreateInitiativeRequest,
+  CreateInitiativeResponse,
   CreateProjectRequest,
   CreateProjectResponse,
   CreateOutcomeRequest,
   CreateOutcomeResponse,
   ImportRequest,
   ImportResponse,
+  InitiativeBrief,
+  InitiativeDetailResponse,
+  InitiativeListResponse,
+  InitiativeSummary,
   OutcomeStatus,
   ProjectBrief,
   ProjectDetailResponse,
@@ -91,20 +97,20 @@ export interface ContextualServer {
   stop: () => Promise<void>;
 }
 
-interface ProjectPassInstruction {
+interface InitiativePassInstruction {
   elementLabel: string;
   rawText: string;
 }
 
-interface ProjectPassRecord {
+interface InitiativePassRecord {
   id: string;
   timestamp: string;
   project?: string;
   instructionCount: number;
-  instructions: ProjectPassInstruction[];
+  instructions: InitiativePassInstruction[];
 }
 
-interface ProjectOutcomeRecord {
+interface InitiativeOutcomeRecord {
   id: string;
   passId: string;
   timestamp: string;
@@ -354,6 +360,56 @@ async function dispatchToAgent(text: string, contextRoot: string): Promise<void>
 }
 
 /**
+ * One-shot, idempotent migration: rename legacy `_projects/` to `_initiatives/`.
+ *
+ * - If `_initiatives/` already exists, do nothing (no-op for fresh installs and
+ *   already-migrated repos).
+ * - If only `_projects/` exists, rename it in place. The directory contents
+ *   (per-initiative folders, brief.md files, passes/, outcomes/, learned/) are
+ *   schema-compatible across the rename, so no content rewriting is needed.
+ * - If neither exists, do nothing. Initiatives will be created lazily.
+ *
+ * Safe to invoke on every server startup.
+ */
+async function migrateProjectsToInitiatives(contextRoot: string): Promise<void> {
+  const oldDir = path.join(contextRoot, '_projects');
+  const newDir = path.join(contextRoot, '_initiatives');
+
+  let newExists = false;
+  try {
+    await fs.access(newDir);
+    newExists = true;
+  } catch {
+    newExists = false;
+  }
+
+  if (newExists) return;
+
+  let oldExists = false;
+  try {
+    const stat = await fs.stat(oldDir);
+    oldExists = stat.isDirectory();
+  } catch {
+    oldExists = false;
+  }
+
+  if (!oldExists) return;
+
+  try {
+    await fs.rename(oldDir, newDir);
+    console.log(`[contextual-server] Migrated ${oldDir} -> ${newDir}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[contextual-server] Failed to migrate ${oldDir} to ${newDir}: ${message}`
+    );
+    // Re-throw so the ready promise rejects and the operator sees the failure
+    // instead of silently running with a stale on-disk layout.
+    throw error;
+  }
+}
+
+/**
  * Create and configure the context server.
  */
 export function createServer(configInput: CreateServerOptions = {}): ContextualServer {
@@ -371,7 +427,12 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
   const outcomeStore = new OutcomeStore(config.contextRoot);
   const toolStore = new ToolStore(config.contextRoot);
   const uiIndexPath = path.join(uiDir, 'index.html');
+  // Run the legacy `_projects` -> `_initiatives` rename concurrently with the
+  // other initialization tasks. ContextIndex does not scan the initiatives
+  // directory (it indexes context-type folders only) and `listInitiatives` is
+  // gated on `ready`, so there is no read/write race.
   const ready = Promise.all([
+    migrateProjectsToInitiatives(config.contextRoot),
     index.ready(),
     passStore.initialize(),
     outcomeStore.initialize(),
@@ -397,7 +458,8 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
         req.path === '/api/pairing' ||
         req.path === '/passes' ||
         req.path === '/outcomes' ||
-        req.path === '/api/projects');
+        req.path === '/api/projects' ||
+        req.path === '/api/initiatives');
     if (!isPollingGet) {
       console.log(`[contextual-server] ${req.method} ${req.path}`);
     }
@@ -468,14 +530,14 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     };
   }
 
-  function getProjectPaths(name: string) {
-    const projectDir = path.join(config.contextRoot, '_projects', name);
+  function getInitiativePaths(name: string) {
+    const initiativeDir = path.join(config.contextRoot, '_initiatives', name);
     return {
-      projectDir,
-      briefPath: path.join(projectDir, 'brief.md'),
-      passesDir: path.join(projectDir, 'passes'),
-      outcomesDir: path.join(projectDir, 'outcomes'),
-      learnedDir: path.join(projectDir, 'learned'),
+      initiativeDir,
+      briefPath: path.join(initiativeDir, 'brief.md'),
+      passesDir: path.join(initiativeDir, 'passes'),
+      outcomesDir: path.join(initiativeDir, 'outcomes'),
+      learnedDir: path.join(initiativeDir, 'learned'),
     };
   }
 
@@ -907,7 +969,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     return null;
   }
 
-  async function readProjectBrief(briefPath: string): Promise<ProjectBrief | null> {
+  async function readInitiativeBrief(briefPath: string): Promise<InitiativeBrief | null> {
     if (!(await pathExists(briefPath))) {
       return null;
     }
@@ -944,7 +1006,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     };
   }
 
-  function toProjectPassRecord(value: unknown): ProjectPassRecord | null {
+  function toInitiativePassRecord(value: unknown): InitiativePassRecord | null {
     if (!value || typeof value !== 'object') {
       return null;
     }
@@ -964,7 +1026,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       return null;
     }
 
-    const instructions: ProjectPassInstruction[] = candidate.instructions.map(
+    const instructions: InitiativePassInstruction[] = candidate.instructions.map(
       (instruction: { element?: { label?: string }; rawText?: string }) => ({
         elementLabel: instruction?.element?.label ?? 'Unknown element',
         rawText: typeof instruction?.rawText === 'string' ? instruction.rawText : '',
@@ -989,7 +1051,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     );
   }
 
-  function toProjectOutcomeRecord(value: unknown): ProjectOutcomeRecord | null {
+  function toInitiativeOutcomeRecord(value: unknown): InitiativeOutcomeRecord | null {
     if (!value || typeof value !== 'object') {
       return null;
     }
@@ -1033,7 +1095,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     };
   }
 
-  async function listProjectPassRecords(passesDir: string): Promise<ProjectPassRecord[]> {
+  async function listInitiativePassRecords(passesDir: string): Promise<InitiativePassRecord[]> {
     if (!(await pathExists(passesDir))) {
       return [];
     }
@@ -1045,7 +1107,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
         .map(async (entry) => {
           try {
             const raw = await fs.readFile(path.join(passesDir, entry.name), 'utf8');
-            return toProjectPassRecord(JSON.parse(raw));
+            return toInitiativePassRecord(JSON.parse(raw));
           } catch {
             return null;
           }
@@ -1053,11 +1115,11 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     );
 
     return records
-      .filter((record): record is ProjectPassRecord => record !== null)
+      .filter((record): record is InitiativePassRecord => record !== null)
       .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
   }
 
-  async function listProjectOutcomeRecords(outcomesDir: string): Promise<ProjectOutcomeRecord[]> {
+  async function listInitiativeOutcomeRecords(outcomesDir: string): Promise<InitiativeOutcomeRecord[]> {
     if (!(await pathExists(outcomesDir))) {
       return [];
     }
@@ -1069,7 +1131,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
         .map(async (entry) => {
           try {
             const raw = await fs.readFile(path.join(outcomesDir, entry.name), 'utf8');
-            return toProjectOutcomeRecord(JSON.parse(raw));
+            return toInitiativeOutcomeRecord(JSON.parse(raw));
           } catch {
             return null;
           }
@@ -1077,42 +1139,42 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     );
 
     return records
-      .filter((record): record is ProjectOutcomeRecord => record !== null)
+      .filter((record): record is InitiativeOutcomeRecord => record !== null)
       .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
   }
 
-  async function listProjects(): Promise<ProjectSummary[]> {
-    const projectsRoot = path.join(config.contextRoot, '_projects');
-    if (!(await pathExists(projectsRoot))) {
+  async function listInitiatives(): Promise<InitiativeSummary[]> {
+    const initiativesRoot = path.join(config.contextRoot, '_initiatives');
+    if (!(await pathExists(initiativesRoot))) {
       return [];
     }
 
     const rootPassesDir = path.join(config.contextRoot, 'passes');
     const rootOutcomesDir = path.join(config.contextRoot, 'outcomes');
-    const entries = await fs.readdir(projectsRoot, { withFileTypes: true });
+    const entries = await fs.readdir(initiativesRoot, { withFileTypes: true });
 
-    const projects = await Promise.all(
+    const initiatives = await Promise.all(
       entries
         .filter((entry) => entry.isDirectory())
         .map(async (entry) => {
-          const { briefPath, passesDir, outcomesDir } = getProjectPaths(entry.name);
-          const brief = await readProjectBrief(briefPath);
+          const { briefPath, passesDir, outcomesDir } = getInitiativePaths(entry.name);
+          const brief = await readInitiativeBrief(briefPath);
           if (!brief) {
             return null;
           }
 
-          const [projectPasses, rootPasses, projectOutcomes, rootOutcomes] = await Promise.all([
-            listProjectPassRecords(passesDir),
-            listProjectPassRecords(rootPassesDir),
-            listProjectOutcomeRecords(outcomesDir),
-            listProjectOutcomeRecords(rootOutcomesDir),
+          const [initiativePasses, rootPasses, initiativeOutcomes, rootOutcomes] = await Promise.all([
+            listInitiativePassRecords(passesDir),
+            listInitiativePassRecords(rootPassesDir),
+            listInitiativeOutcomeRecords(outcomesDir),
+            listInitiativeOutcomeRecords(rootOutcomesDir),
           ]);
           const scopedRootPasses = rootPasses.filter((pass) => !pass.project || pass.project === brief.name);
           const scopedRootOutcomes = rootOutcomes.filter(
             (outcome) => !outcome.project || outcome.project === brief.name
           );
 
-          const allPasses = [...projectPasses];
+          const allPasses = [...initiativePasses];
           const seenPassIds = new Set(allPasses.map((p) => p.id));
           for (const pass of scopedRootPasses) {
             if (!seenPassIds.has(pass.id)) {
@@ -1121,7 +1183,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
             }
           }
 
-          const allOutcomes = [...projectOutcomes];
+          const allOutcomes = [...initiativeOutcomes];
           const seenOutcomeIds = new Set(allOutcomes.map((o) => o.id));
           for (const outcome of scopedRootOutcomes) {
             if (!seenOutcomeIds.has(outcome.id)) {
@@ -1143,42 +1205,42 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
             passCount: allPasses.length,
             outcomeCount: allOutcomes.length,
             activeTypes: brief.activeTypes,
-        } satisfies ProjectSummary;
+        } satisfies InitiativeSummary;
         })
     );
 
-    const projectSummaries = projects.filter(
-      (project): project is NonNullable<typeof project> => project !== null
+    const initiativeSummaries = initiatives.filter(
+      (initiative): initiative is NonNullable<typeof initiative> => initiative !== null
     );
 
-    return projectSummaries.sort(
+    return initiativeSummaries.sort(
       (left, right) =>
         new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
     );
   }
 
-  async function createProject(request: CreateProjectRequest): Promise<CreateProjectResponse> {
+  async function createInitiative(request: CreateInitiativeRequest): Promise<CreateInitiativeResponse> {
     if (typeof request.name !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(request.name)) {
-      throw new Error('Project name must be kebab-case');
+      throw new Error('Initiative name must be kebab-case');
     }
 
     if (typeof request.title !== 'string' || !request.title.trim()) {
-      throw new Error('Project title is required');
+      throw new Error('Initiative title is required');
     }
 
     const activeTypes = Array.isArray(request.activeTypes) ? request.activeTypes : [];
     if (!activeTypes.every((type) => isContextType(type))) {
-      throw new Error('Project activeTypes must be valid context types');
+      throw new Error('Initiative activeTypes must be valid context types');
     }
 
-    const { projectDir, briefPath } = getProjectPaths(request.name);
-    if (await pathExists(projectDir)) {
-      throw new Error(`Project already exists: '${request.name}'`);
+    const { initiativeDir, briefPath } = getInitiativePaths(request.name);
+    if (await pathExists(initiativeDir)) {
+      throw new Error(`Initiative already exists: '${request.name}'`);
     }
 
     const timestamp = new Date().toISOString();
     const description = typeof request.description === 'string' ? request.description.trim() : '';
-    const project: ProjectBrief = {
+    const initiative: InitiativeBrief = {
       name: request.name,
       title: request.title.trim(),
       description,
@@ -1189,48 +1251,48 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
     const briefContent = [
       '---',
-      `name: ${project.name}`,
-      `title: ${JSON.stringify(project.title)}`,
-      `description: ${JSON.stringify(project.description)}`,
-      `createdAt: ${project.createdAt}`,
-      `lastActivityAt: ${project.lastActivityAt}`,
+      `name: ${initiative.name}`,
+      `title: ${JSON.stringify(initiative.title)}`,
+      `description: ${JSON.stringify(initiative.description)}`,
+      `createdAt: ${initiative.createdAt}`,
+      `lastActivityAt: ${initiative.lastActivityAt}`,
       'activeTypes:',
       ...activeTypes.map((type) => `  - ${type}`),
       '---',
       '',
-      `# ${project.title}`,
+      `# ${initiative.title}`,
       '',
-      project.description || 'Describe this project here.',
+      initiative.description || 'Describe this initiative here.',
       '',
     ].join('\n');
 
-    await ensureDir(projectDir);
-    await ensureLearnedArtifacts(projectDir);
+    await ensureDir(initiativeDir);
+    await ensureLearnedArtifacts(initiativeDir);
     await writeFileAtomic(briefPath, briefContent);
 
     return {
-      project,
-      path: projectDir,
+      initiative,
+      path: initiativeDir,
     };
   }
 
-  async function getProjectDetail(name: string): Promise<ProjectDetailResponse & {
-    passes: ProjectPassRecord[];
-    outcomes: ProjectOutcomeRecord[];
+  async function getInitiativeDetail(name: string): Promise<InitiativeDetailResponse & {
+    passes: InitiativePassRecord[];
+    outcomes: InitiativeOutcomeRecord[];
   }> {
-    const { briefPath, passesDir, outcomesDir } = getProjectPaths(name);
-    const brief = await readProjectBrief(briefPath);
+    const { briefPath, passesDir, outcomesDir } = getInitiativePaths(name);
+    const brief = await readInitiativeBrief(briefPath);
     if (!brief) {
-      throw new Error(`Project not found: '${name}'`);
+      throw new Error(`Initiative not found: '${name}'`);
     }
 
     const rootPassesDir = path.join(config.contextRoot, 'passes');
     const rootOutcomesDir = path.join(config.contextRoot, 'outcomes');
-    const [projectPasses, rootPasses, projectOutcomes, rootOutcomes] = await Promise.all([
-      listProjectPassRecords(passesDir),
-      listProjectPassRecords(rootPassesDir),
-      listProjectOutcomeRecords(outcomesDir),
-      listProjectOutcomeRecords(rootOutcomesDir),
+    const [initiativePasses, rootPasses, initiativeOutcomes, rootOutcomes] = await Promise.all([
+      listInitiativePassRecords(passesDir),
+      listInitiativePassRecords(rootPassesDir),
+      listInitiativeOutcomeRecords(outcomesDir),
+      listInitiativeOutcomeRecords(rootOutcomesDir),
     ]);
 
     const scopedRootPasses = rootPasses.filter((pass) => !pass.project || pass.project === brief.name);
@@ -1238,7 +1300,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       (outcome) => !outcome.project || outcome.project === brief.name
     );
 
-    const allPasses = [...projectPasses];
+    const allPasses = [...initiativePasses];
     const seenPassIds = new Set(allPasses.map((p) => p.id));
     for (const pass of scopedRootPasses) {
       if (!seenPassIds.has(pass.id)) {
@@ -1247,7 +1309,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
       }
     }
 
-    const allOutcomes = [...projectOutcomes];
+    const allOutcomes = [...initiativeOutcomes];
     const seenOutcomeIds = new Set(allOutcomes.map((o) => o.id));
     for (const outcome of scopedRootOutcomes) {
       if (!seenOutcomeIds.has(outcome.id)) {
@@ -1605,7 +1667,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
   app.get('/api/corpus/passes', async (_req, res) => {
     try {
-      const passes = await listProjectPassRecords(path.join(config.contextRoot, 'passes'));
+      const passes = await listInitiativePassRecords(path.join(config.contextRoot, 'passes'));
       res.json({ passes, passCount: passes.length });
     } catch (error) {
       console.error('List corpus passes failed:', error);
@@ -1615,7 +1677,7 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
   app.get('/api/corpus/outcomes', async (_req, res) => {
     try {
-      const outcomes = await listProjectOutcomeRecords(path.join(config.contextRoot, 'outcomes'));
+      const outcomes = await listInitiativeOutcomeRecords(path.join(config.contextRoot, 'outcomes'));
       res.json({ outcomes, outcomeCount: outcomes.length });
     } catch (error) {
       console.error('List corpus outcomes failed:', error);
@@ -1880,9 +1942,41 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
     }
   });
 
+  // New /api/initiatives routes
+  app.get('/api/initiatives', async (_req, res: express.Response<InitiativeListResponse | ServerErrorResponse>) => {
+    try {
+      res.json({ initiatives: await listInitiatives() });
+    } catch (error) {
+      console.error('List initiatives failed:', error);
+      res.status(500).json({ error: 'Failed to list initiatives' });
+    }
+  });
+
+  app.post('/api/initiatives', async (req, res: express.Response<CreateInitiativeResponse | ServerErrorResponse>) => {
+    try {
+      res.status(201).json(await createInitiative(req.body as CreateInitiativeRequest));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create initiative';
+      console.error('Create initiative failed:', error);
+      res.status(message.startsWith('Initiative already exists') ? 409 : 400).json({ error: message });
+    }
+  });
+
+  app.get('/api/initiatives/:name', async (req, res: express.Response<InitiativeDetailResponse | ServerErrorResponse>) => {
+    try {
+      res.json(await getInitiativeDetail(req.params.name));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read initiative';
+      console.error(`Get initiative failed for ${req.params.name}:`, error);
+      res.status(message.startsWith('Initiative not found') ? 404 : 500).json({ error: message });
+    }
+  });
+
+  // Legacy /api/projects routes (delegates to initiatives with backward-compatible response)
   app.get('/api/projects', async (_req, res: express.Response<ProjectListResponse | ServerErrorResponse>) => {
     try {
-      res.json({ projects: await listProjects() });
+      const initiatives = await listInitiatives();
+      res.json({ projects: initiatives });
     } catch (error) {
       console.error('List projects failed:', error);
       res.status(500).json({ error: 'Failed to list projects' });
@@ -1891,9 +1985,14 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
   app.post('/api/projects', async (req, res: express.Response<CreateProjectResponse | ServerErrorResponse>) => {
     try {
-      res.status(201).json(await createProject(req.body as CreateProjectRequest));
+      const result = await createInitiative(req.body as CreateProjectRequest);
+      res.status(201).json({ project: result.initiative, path: result.path });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to create project';
+      let message = error instanceof Error ? error.message : 'Failed to create project';
+      // Rewrite Initiative -> Project in error messages for backward compatibility
+      if (message.startsWith('Initiative')) {
+        message = message.replace(/^Initiative/, 'Project');
+      }
       console.error('Create project failed:', error);
       res.status(message.startsWith('Project already exists') ? 409 : 400).json({ error: message });
     }
@@ -1901,9 +2000,13 @@ export function createServer(configInput: CreateServerOptions = {}): ContextualS
 
   app.get('/api/projects/:name', async (req, res: express.Response<ProjectDetailResponse | ServerErrorResponse>) => {
     try {
-      res.json(await getProjectDetail(req.params.name));
+      res.json(await getInitiativeDetail(req.params.name));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to read project';
+      let message = error instanceof Error ? error.message : 'Failed to read project';
+      // Rewrite Initiative -> Project in error messages for backward compatibility
+      if (message.startsWith('Initiative')) {
+        message = message.replace(/^Initiative/, 'Project');
+      }
       console.error(`Get project failed for ${req.params.name}:`, error);
       res.status(message.startsWith('Project not found') ? 404 : 500).json({ error: message });
     }

@@ -203,12 +203,18 @@ export interface ImportResponse {
 }
 
 // -----------------------------------------------------------------------------
-// Project Types
+// Initiative Types
 // -----------------------------------------------------------------------------
+// An "initiative" is a bounded sub-effort within a product (e.g. a redesign,
+// a feature campaign, an experiment). Each initiative gets its own brief,
+// passes, and outcomes, scoped to a subset of the 7 context categories.
+//
+// Stored on disk under `_initiatives/{name}/`. For backward compatibility,
+// existing `_projects/` folders are migrated automatically on server startup.
 
-/** A project brief stored in _projects/{name}/brief.md */
-export interface ProjectBrief {
-  /** Project name (directory name) */
+/** An initiative brief stored in _initiatives/{name}/brief.md */
+export interface InitiativeBrief {
+  /** Initiative name (kebab-case, used as directory name) */
   name: string;
   /** Human-readable title from frontmatter */
   title: string;
@@ -218,14 +224,14 @@ export interface ProjectBrief {
   createdAt: string;
   /** ISO timestamp of last activity */
   lastActivityAt: string;
-  /** Context types this project primarily uses */
+  /** Context types this initiative primarily uses */
   activeTypes: ContextType[];
   /** Full markdown body content from brief.md (after frontmatter) */
   body?: string;
 }
 
-/** Summary for project list views */
-export interface ProjectSummary {
+/** Summary for initiative list views */
+export interface InitiativeSummary {
   name: string;
   title: string;
   lastActivityAt: string;
@@ -234,14 +240,14 @@ export interface ProjectSummary {
   activeTypes: ContextType[];
 }
 
-/** Response for GET /api/projects */
-export interface ProjectListResponse {
-  projects: ProjectSummary[];
+/** Response for GET /api/initiatives */
+export interface InitiativeListResponse {
+  initiatives: InitiativeSummary[];
 }
 
-/** Response for GET /api/projects/:name */
-export interface ProjectDetailResponse {
-  brief: ProjectBrief;
+/** Response for GET /api/initiatives/:name */
+export interface InitiativeDetailResponse {
+  brief: InitiativeBrief;
   passCount: number;
   outcomeCount?: number;
   passes: Array<{
@@ -257,15 +263,40 @@ export interface ProjectDetailResponse {
   }>;
 }
 
-/** Request for POST /api/projects */
-export interface CreateProjectRequest {
+/** Request for POST /api/initiatives */
+export interface CreateInitiativeRequest {
   name: string;
   title: string;
   description?: string;
   activeTypes?: ContextType[];
 }
 
-/** Response for POST /api/projects */
+/** Response for POST /api/initiatives */
+export interface CreateInitiativeResponse {
+  initiative: InitiativeBrief;
+  path: string;
+}
+
+// -----------------------------------------------------------------------------
+// Backward-compatible aliases (Project* === Initiative*)
+// -----------------------------------------------------------------------------
+// These aliases preserve compatibility with code (and the deprecated
+// /api/projects route) compiled against earlier 0.1.x types. They will be
+// removed in 0.3.0.
+
+/** @deprecated Use {@link InitiativeBrief}. */
+export type ProjectBrief = InitiativeBrief;
+/** @deprecated Use {@link InitiativeSummary}. */
+export type ProjectSummary = InitiativeSummary;
+/** @deprecated Use {@link InitiativeListResponse} (note: response field renamed `initiatives`). */
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+}
+/** @deprecated Use {@link InitiativeDetailResponse}. */
+export type ProjectDetailResponse = InitiativeDetailResponse;
+/** @deprecated Use {@link CreateInitiativeRequest}. */
+export type CreateProjectRequest = CreateInitiativeRequest;
+/** @deprecated Use {@link CreateInitiativeResponse} (note: response field renamed `initiative`). */
 export interface CreateProjectResponse {
   project: ProjectBrief;
   path: string;

@@ -3,7 +3,8 @@
 // =============================================================================
 // Tests the Express HTTP endpoints end-to-end using createServer with a
 // temporary context root. Covers health, corpus, sources, passes, outcomes,
-// resolve, suggest, inspect, projects, and tools.
+// resolve, suggest, inspect, initiatives (and legacy /api/projects), tools,
+// and the _projects -> _initiatives on-disk migration.
 // =============================================================================
 
 import test from 'node:test';
@@ -517,7 +518,7 @@ test('GET and POST /tools manages tool configuration', async () => {
   }
 });
 
-test('POST /api/projects creates a project', async () => {
+test('POST /api/projects creates a project (legacy alias)', async () => {
   const root = await setupContextRoot();
   const { server, baseUrl } = await startTestServer(root);
 
@@ -535,12 +536,151 @@ test('POST /api/projects creates a project', async () => {
     assert.equal(body.project.name, 'my-project');
     assert.equal(body.project.title, 'My Test Project');
 
-    // List projects
+    // List projects (legacy)
     const listRes = await fetchJSON(baseUrl, '/api/projects');
     assert.equal(listRes.status, 200);
     const listedProject = listRes.body.projects.find((p) => p.name === 'my-project');
     assert.ok(listedProject);
     assert.deepEqual(listedProject.activeTypes, ['research', 'design-system']);
+
+    // Same record should also surface via the new /api/initiatives endpoint.
+    const newListRes = await fetchJSON(baseUrl, '/api/initiatives');
+    assert.equal(newListRes.status, 200);
+    const listedInitiative = newListRes.body.initiatives.find(
+      (i) => i.name === 'my-project',
+    );
+    assert.ok(listedInitiative);
+    assert.equal(listedInitiative.title, 'My Test Project');
+
+    // And on-disk it should live under _initiatives/, not _projects/.
+    await fs.access(path.join(root, '_initiatives', 'my-project', 'brief.md'));
+    const oldExists = await fs
+      .access(path.join(root, '_projects'))
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(oldExists, false, '_projects/ should not be created on fresh installs');
+  } finally {
+    await server.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/initiatives creates an initiative with new field shape', async () => {
+  const root = await setupContextRoot();
+  const { server, baseUrl } = await startTestServer(root);
+
+  try {
+    const { status, body } = await fetchJSON(baseUrl, '/api/initiatives', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'checkout-redesign',
+        title: 'Checkout Redesign',
+        description: 'Reduce friction',
+        activeTypes: ['research'],
+      }),
+    });
+    assert.equal(status, 201);
+    assert.equal(body.initiative.name, 'checkout-redesign');
+    assert.equal(body.initiative.title, 'Checkout Redesign');
+    assert.ok(body.path && body.path.includes('_initiatives'));
+
+    // Detail endpoint
+    const detail = await fetchJSON(baseUrl, '/api/initiatives/checkout-redesign');
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.brief.name, 'checkout-redesign');
+    assert.equal(detail.body.passCount, 0);
+
+    // Validation: bad kebab name
+    const badRes = await fetchJSON(baseUrl, '/api/initiatives', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Not Kebab', title: 'x' }),
+    });
+    assert.equal(badRes.status, 400);
+  } finally {
+    await server.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Server migrates legacy _projects/ to _initiatives/ on startup', async () => {
+  const root = await setupContextRoot();
+
+  // Pre-seed a legacy `_projects/` directory with one initiative-shaped folder.
+  const legacyDir = path.join(root, '_projects', 'legacy-init');
+  await fs.mkdir(legacyDir, { recursive: true });
+  await fs.writeFile(
+    path.join(legacyDir, 'brief.md'),
+    [
+      '---',
+      'name: legacy-init',
+      'title: Legacy Initiative',
+      'createdAt: 2024-01-01T00:00:00Z',
+      'lastActivityAt: 2024-01-01T00:00:00Z',
+      'activeTypes: []',
+      '---',
+      '',
+      'Legacy body.',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const { server, baseUrl } = await startTestServer(root);
+
+  try {
+    // After startup, _projects should be gone and _initiatives should hold the data.
+    const newExists = await fs
+      .stat(path.join(root, '_initiatives', 'legacy-init', 'brief.md'))
+      .then((s) => s.isFile())
+      .catch(() => false);
+    assert.equal(newExists, true, '_initiatives/legacy-init/brief.md should exist');
+
+    const oldExists = await fs
+      .access(path.join(root, '_projects'))
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(oldExists, false, '_projects/ should have been renamed away');
+
+    // Initiative is visible to the new API
+    const listRes = await fetchJSON(baseUrl, '/api/initiatives');
+    assert.equal(listRes.status, 200);
+    const found = listRes.body.initiatives.find((i) => i.name === 'legacy-init');
+    assert.ok(found, 'legacy initiative should be listed after migration');
+  } finally {
+    await server.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Migration is a no-op when _initiatives/ already exists', async () => {
+  const root = await setupContextRoot();
+
+  // Pre-seed BOTH directories with distinct contents to verify _projects is left alone.
+  await fs.mkdir(path.join(root, '_projects', 'old-only'), { recursive: true });
+  await fs.writeFile(path.join(root, '_projects', 'old-only', 'marker'), 'old', 'utf8');
+
+  await fs.mkdir(path.join(root, '_initiatives', 'new-only'), { recursive: true });
+  await fs.writeFile(
+    path.join(root, '_initiatives', 'new-only', 'marker'),
+    'new',
+    'utf8',
+  );
+
+  const { server } = await startTestServer(root);
+
+  try {
+    // _initiatives content untouched
+    const newMarker = await fs.readFile(
+      path.join(root, '_initiatives', 'new-only', 'marker'),
+      'utf8',
+    );
+    assert.equal(newMarker, 'new');
+
+    // _projects still present and not merged in
+    const oldMarker = await fs.readFile(
+      path.join(root, '_projects', 'old-only', 'marker'),
+      'utf8',
+    );
+    assert.equal(oldMarker, 'old');
   } finally {
     await server.stop();
     await fs.rm(root, { recursive: true, force: true });

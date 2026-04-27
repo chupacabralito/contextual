@@ -3,14 +3,23 @@
 // =============================================================================
 // Hierarchical sidebar navigation reflecting the two-level context hierarchy:
 //   Product (top) -- expandable to show all 7 categories
-//   Projects (below) -- each expandable to show their own categories
+//   Initiatives (below) -- each expandable to show their own categories
 //
-// Replaces the old flat CorpusHealth + ProjectPicker with a single tree view.
+// Progressive disclosure:
+//   - When no initiatives exist, the "Initiatives" header is hidden and a
+//     single `+ New initiative` affordance appears below the product section.
+//   - When at least one exists, the "Initiatives" header is rendered with a
+//     small `+` button on the right.
+//
+// Inline create row:
+//   - Clicking `+` reveals an inline edit row at the top of the (real or
+//     hypothetical) Initiatives section. The user types a display title; the
+//     kebab-case name is auto-derived. Enter commits, Escape/blur cancels.
 // =============================================================================
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CorpusTypeEntry } from '../hooks/useCorpus.js';
-import type { ProjectSummary } from '../hooks/useProjects.js';
+import type { InitiativeSummary } from '../hooks/useProjects.js';
 import { TYPE_LABELS } from '../hooks/useCorpus.js';
 import type { ContextType } from '../hooks/useCorpus.js';
 
@@ -20,7 +29,7 @@ import type { ContextType } from '../hooks/useCorpus.js';
 
 /** What is currently selected in the sidebar */
 export interface SidebarSelection {
-  /** 'product' or a project name */
+  /** 'product' or an initiative name */
   scope: 'product' | string;
   /** null = brief/overview, string = category type */
   category: ContextType | null;
@@ -31,13 +40,20 @@ interface CorpusTreeProps {
   types: CorpusTypeEntry[];
   /** Product name shown at top of tree */
   productName: string;
-  /** Project list */
-  projects: ProjectSummary[];
-  projectsLoading: boolean;
+  /** Initiative list */
+  initiatives: InitiativeSummary[];
+  initiativesLoading: boolean;
   /** Current selection */
   selection: SidebarSelection | null;
   /** Called when user clicks a node */
   onSelect: (selection: SidebarSelection) => void;
+  /**
+   * Create a new initiative. Called when the inline create row commits.
+   * Should resolve once the new initiative is persisted; the parent is
+   * expected to refetch the list. Rejects with an Error whose message is
+   * surfaced inline in the row.
+   */
+  onCreateInitiative: (input: { name: string; title: string }) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +82,110 @@ function formatRelativeTime(iso: string): string {
   }
 }
 
+/**
+ * Convert a free-text title into a server-acceptable kebab-case name.
+ * Mirrors the server's regex: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+ */
+export function deriveKebabName(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // strip diacritics
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// InlineInitiativeRow
+// ---------------------------------------------------------------------------
+
+interface InlineInitiativeRowProps {
+  onCommit: (input: { name: string; title: string }) => Promise<void>;
+  onCancel: () => void;
+}
+
+function InlineInitiativeRow({ onCommit, onCancel }: InlineInitiativeRowProps) {
+  const [title, setTitle] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const submittedRef = useRef(false);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const derivedName = deriveKebabName(title);
+  const trimmedTitle = title.trim();
+  const canSubmit = trimmedTitle.length > 0 && derivedName.length > 0 && !submitting;
+
+  async function handleSubmit() {
+    if (!canSubmit) return;
+    submittedRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onCommit({ name: derivedName, title: trimmedTitle });
+      // Parent will re-render and unmount this row.
+    } catch (err) {
+      submittedRef.current = false;
+      const msg = err instanceof Error ? err.message : 'Failed to create initiative';
+      setError(msg);
+      setSubmitting(false);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void handleSubmit();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      submittedRef.current = true; // suppress blur->cancel
+      onCancel();
+    }
+  }
+
+  function handleBlur() {
+    // Defer so click on input or programmatic refocus has a chance.
+    setTimeout(() => {
+      if (submittedRef.current || submitting) return;
+      onCancel();
+    }, 120);
+  }
+
+  return (
+    <div className="tree-initiative tree-initiative-create">
+      <div className="tree-initiative-create-row">
+        <input
+          ref={inputRef}
+          type="text"
+          className="tree-initiative-create-input"
+          placeholder="New initiative title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          disabled={submitting}
+          aria-label="New initiative title"
+        />
+      </div>
+      {trimmedTitle.length > 0 && (
+        <div className="tree-initiative-create-hint">
+          {derivedName.length > 0 ? (
+            <>naming as: <code>{derivedName}</code></>
+          ) : (
+            <span className="tree-initiative-create-error">title must include letters or numbers</span>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="tree-initiative-create-error" role="alert">{error}</div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -73,18 +193,21 @@ function formatRelativeTime(iso: string): string {
 export function CorpusTree({
   types,
   productName,
-  projects,
-  projectsLoading,
+  initiatives,
+  initiativesLoading,
   selection,
   onSelect,
+  onCreateInitiative,
 }: CorpusTreeProps) {
   const [productExpanded, setProductExpanded] = useState(true);
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [expandedInitiatives, setExpandedInitiatives] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
 
   const isProductScope = selection?.scope === 'product';
+  const hasInitiatives = initiatives.length > 0;
 
-  function toggleProjectExpanded(name: string) {
-    setExpandedProjects((prev) => {
+  function toggleInitiativeExpanded(name: string) {
+    setExpandedInitiatives((prev) => {
       const next = new Set(prev);
       if (next.has(name)) {
         next.delete(name);
@@ -104,15 +227,31 @@ export function CorpusTree({
     onSelect({ scope: 'product', category: type });
   }
 
-  function handleProjectClick(name: string) {
+  function handleInitiativeClick(name: string) {
     onSelect({ scope: name, category: null });
-    if (!expandedProjects.has(name)) {
-      toggleProjectExpanded(name);
+    if (!expandedInitiatives.has(name)) {
+      toggleInitiativeExpanded(name);
     }
   }
 
-  function handleProjectCategoryClick(projectName: string, type: ContextType) {
-    onSelect({ scope: projectName, category: type });
+  function handleInitiativeCategoryClick(initiativeName: string, type: ContextType) {
+    onSelect({ scope: initiativeName, category: type });
+  }
+
+  async function handleCommit(input: { name: string; title: string }) {
+    await onCreateInitiative(input);
+    // Success: parent refetches; close the inline row and select the new initiative.
+    setCreating(false);
+    setExpandedInitiatives((prev) => {
+      const next = new Set(prev);
+      next.add(input.name);
+      return next;
+    });
+    onSelect({ scope: input.name, category: null });
+  }
+
+  function handleCancel() {
+    setCreating(false);
   }
 
   return (
@@ -171,63 +310,90 @@ export function CorpusTree({
         )}
       </div>
 
-      {/* ---- Projects section ---- */}
+      {/* ---- Initiatives section ---- */}
       <div className="tree-section">
-        <div className="tree-section-label">
-          <span>Projects</span>
-        </div>
-
-        {projectsLoading && (
+        {initiativesLoading && (
           <div className="tree-loading">Loading...</div>
         )}
 
-        {!projectsLoading && projects.length === 0 && (
-          <div className="tree-empty">No projects yet</div>
+        {/* Header is conditional on there being at least one initiative */}
+        {!initiativesLoading && hasInitiatives && (
+          <div className="tree-section-label tree-section-label-with-action">
+            <span>Initiatives</span>
+            <button
+              type="button"
+              className="tree-section-add"
+              aria-label="New initiative"
+              title="New initiative"
+              onClick={() => setCreating(true)}
+              disabled={creating}
+            >
+              +
+            </button>
+          </div>
         )}
 
-        {projects.map((project) => {
-          const isExpanded = expandedProjects.has(project.name);
-          const isProjectScope = selection?.scope === project.name;
-          const isProjectBrief = isProjectScope && !selection?.category;
-          const projectTypes =
-            project.activeTypes.length > 0
-              ? project.activeTypes
-              : types.filter((entry) => entry.exists).map((entry) => entry.type);
+        {/* Inline create row (rendered inside section regardless of header presence) */}
+        {creating && (
+          <InlineInitiativeRow onCommit={handleCommit} onCancel={handleCancel} />
+        )}
+
+        {/* Empty state: no header, just a single affordance */}
+        {!initiativesLoading && !hasInitiatives && !creating && (
+          <button
+            type="button"
+            className="tree-section-empty-add"
+            onClick={() => setCreating(true)}
+          >
+            + New initiative
+          </button>
+        )}
+
+        {initiatives.map((initiative) => {
+          const isExpanded = expandedInitiatives.has(initiative.name);
+          const isInitiativeScope = selection?.scope === initiative.name;
+          const isInitiativeBrief = isInitiativeScope && !selection?.category;
+          const activeTypes = new Set(initiative.activeTypes);
 
           return (
-            <div key={project.name} className="tree-project">
+            <div key={initiative.name} className="tree-initiative">
               <button
                 type="button"
-                className={`tree-scope-header tree-project-header ${isProjectBrief ? 'selected' : ''}`}
-                onClick={() => handleProjectClick(project.name)}
+                className={`tree-scope-header tree-initiative-header ${isInitiativeBrief ? 'selected' : ''}`}
+                onClick={() => handleInitiativeClick(initiative.name)}
               >
                 <button
                   type="button"
                   className="tree-scope-toggle"
-                  aria-label={isExpanded ? `Collapse ${project.title}` : `Expand ${project.title}`}
-                  onClick={(e) => { e.stopPropagation(); toggleProjectExpanded(project.name); }}
+                  aria-label={isExpanded ? `Collapse ${initiative.title}` : `Expand ${initiative.title}`}
+                  onClick={(e) => { e.stopPropagation(); toggleInitiativeExpanded(initiative.name); }}
                 >
                   {isExpanded ? '\u25BE' : '\u25B8'}
                 </button>
-                <span className="tree-scope-name">{project.title}</span>
+                <span className="tree-scope-name">{initiative.title}</span>
                 <span className="tree-scope-meta">
-                  {formatRelativeTime(project.lastActivityAt)}
+                  {formatRelativeTime(initiative.lastActivityAt)}
                 </span>
               </button>
 
               {isExpanded && (
                 <div className="tree-children">
-                  {projectTypes.map((type) => {
-                    const isSelected = isProjectScope && selection?.category === type;
+                  {types.map((entry) => {
+                    const type = entry.type;
+                    const isSelected = isInitiativeScope && selection?.category === type;
+                    const hasContent = activeTypes.has(type);
                     return (
                       <button
                         key={type}
                         type="button"
-                        className={`tree-category tree-project-category ${isSelected ? 'selected' : ''}`}
-                        onClick={() => handleProjectCategoryClick(project.name, type)}
+                        className={`tree-category tree-initiative-category ${isSelected ? 'selected' : ''} ${hasContent ? '' : 'empty'}`}
+                        onClick={() => handleInitiativeCategoryClick(initiative.name, type)}
                       >
                         <div className="tree-category-top">
                           <span className="tree-category-name">{TYPE_LABELS[type]}</span>
+                          <span className="tree-category-meta">
+                            {hasContent ? 'has content' : 'empty'}
+                          </span>
                         </div>
                       </button>
                     );
